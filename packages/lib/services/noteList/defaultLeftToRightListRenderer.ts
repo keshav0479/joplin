@@ -9,6 +9,7 @@ interface Props {
 		is_todo: number;
 		todo_completed: number;
 		body: string;
+		is_locked: number;
 	};
 	item: {
 		size: {
@@ -37,6 +38,7 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 		'item.size.height',
 		'note.body',
 		'note.id',
+		'note.is_locked',
 		'note.is_shared',
 		'note.is_todo',
 		'note.isWatched',
@@ -103,6 +105,11 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 					color: var(--joplin-color);
 				}
 
+				> .lockedicon {
+					padding-right: 4px;
+					color: var(--joplin-color);
+				}
+
 				> .titlecontent {
 					word-break: break-all;
 					overflow: hidden;
@@ -149,6 +156,7 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 					<input class="checkbox" data-id="todo-checkbox" type="checkbox" {{#note.todo_completed}}checked="checked"{{/note.todo_completed}}>
 				{{/note.is_todo}}
 				<i class="watchedicon fa fa-share-square"></i>
+				{{#note.is_locked}}<i class="lockedicon fa fa-lock"></i>{{/note.is_locked}}
 				<div class="titlecontent">{{note.title}}</div>
 			</div>
 			<div class="preview">{{notePreview}}</div>
@@ -160,7 +168,8 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 
 		return {
 			...props,
-			notePreview: markupToHtml_.stripMarkup(MarkupLanguage.Markdown, props.note.body).substring(0, 200),
+			// A locked note's body is ciphertext, so there is no meaningful preview to show.
+			notePreview: props.note.is_locked ? '' : markupToHtml_.stripMarkup(MarkupLanguage.Markdown, props.note.body).substring(0, 200),
 			titleWidth: props.item.size.width - 32,
 		};
 	},

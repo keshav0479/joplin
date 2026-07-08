@@ -45,6 +45,7 @@ const renderer: ListRenderer = {
 		'item.size.height',
 		'note.checkboxes',
 		'note.id',
+		'note.is_locked',
 		'note.is_shared',
 		'note.is_todo',
 		'note.isWatched',
@@ -102,6 +103,11 @@ const renderer: ListRenderer = {
 
 				> .watchedicon {
 					display: none;
+					padding-right: 4px;
+					color: var(--joplin-color);
+				}
+
+				> .lockedicon {
 					padding-right: 4px;
 					color: var(--joplin-color);
 				}
@@ -164,6 +170,7 @@ const renderer: ListRenderer = {
 			{{/note.is_todo}}
 			<div class="title" data-id="{{note.id}}">
 				<i class="watchedicon fa fa-share-square"></i>
+				{{#note.is_locked}}<i class="lockedicon fa fa-lock"></i>{{/note.is_locked}}
 				<span>{{note.title}}</span>
 			</div>
 			{{#checkboxStats}}

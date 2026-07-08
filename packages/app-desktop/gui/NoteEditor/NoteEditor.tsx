@@ -28,6 +28,9 @@ import Setting from '@joplin/lib/models/Setting';
 import stateToWhenClauseContext from '../../services/commands/stateToWhenClauseContext';
 import ExternalEditWatcher from '@joplin/lib/services/ExternalEditWatcher';
 import { itemIsReadOnly } from '@joplin/lib/models/utils/readOnly';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import { SyncInfo } from '@joplin/lib/services/synchronizer/syncInfoUtils';
+import NoteLockPanel from './NoteLockPanel/NoteLockPanel';
 import { themeStyle } from '@joplin/lib/theme';
 import { substrWithEllipsis } from '@joplin/lib/string-utils';
 import NoteSearchBar from '../NoteSearchBar';
@@ -97,6 +100,12 @@ function NoteEditorContent(props: NoteEditorProps) {
 	});
 	const formNote_beforeLoad = useCallback(async (event: OnLoadEvent) => {
 		await saveNoteIfWillChange(event.formNote);
+		// The lock must wait for the pending saves of the note being left: a locked note's save
+		// needs the unlocked session to encrypt, so locking first would drop the last edits.
+		if (event.formNote.id && Setting.value('noteLock.lockOnNoteSwitch')) {
+			await event.formNote.saveActionQueue?.waitForAllDone();
+			NoteLockSession.instance().lock();
+		}
 		setShowRevisions(false);
 	}, [saveNoteIfWillChange]);
 
@@ -117,6 +126,7 @@ function NoteEditorContent(props: NoteEditorProps) {
 		onAfterLoad: formNote_afterLoad,
 		builtInEditorVisible,
 		editorId,
+		noteLockSessionUnlocked: props.noteLockSessionUnlocked,
 	});
 	setFormNoteRef.current = setFormNote;
 	const formNoteRef = useRef<FormNote>(formNote);
@@ -664,6 +674,21 @@ function NoteEditorContent(props: NoteEditorProps) {
 		return renderNoNotes(styles.root);
 	}
 
+	// A locked note only mounts once its plaintext was loaded through the gated path. A note
+	// with pending changes stays mounted on lock, so the unsaved plaintext is not thrown away
+	// before its re-queued save runs on the next unlock.
+	if (formNote.is_locked && (formNote.lockedBodyUnavailable || (!props.noteLockSessionUnlocked && !formNote.hasChanged))) {
+		return (
+			<div style={styles.root} ref={containerRef}>
+				<NoteLockPanel
+					noteTitle={formNote.title}
+					hasNoteLockKey={props.hasNoteLockKey}
+					dispatch={props.dispatch}
+				/>
+			</div>
+		);
+	}
+
 	const theme = themeStyle(props.themeId);
 
 	function renderConvertHtmlToMarkdown(): React.ReactNode {
@@ -725,6 +750,15 @@ interface ConnectProps {
 	windowId: string;
 }
 
+// Memoized because mapStateToProps runs on every dispatch and SyncInfo parses the cached JSON.
+let hasNoteLockKeyCache: { syncInfoCache: string; value: boolean } = null;
+const hasNoteLockKey = (syncInfoCache: string) => {
+	if (!hasNoteLockKeyCache || hasNoteLockKeyCache.syncInfoCache !== syncInfoCache) {
+		hasNoteLockKeyCache = { syncInfoCache, value: !!new SyncInfo(syncInfoCache).noteLockKey };
+	}
+	return hasNoteLockKeyCache.value;
+};
+
 const mapStateToProps = (state: AppState, ownProps: ConnectProps) => {
 	const whenClauseContext = stateToWhenClauseContext(state, { windowId: ownProps.windowId });
 	const windowState = stateUtils.windowStateById(state, ownProps.windowId);
@@ -784,6 +818,8 @@ const mapStateToProps = (state: AppState, ownProps: ConnectProps) => {
 		enableInEditorRendering: state.settings['editor.inlineRendering'],
 		showNoteLinkIcon: state.settings['notes.showNoteLinkIcon'],
 		whiteboardForceMarkdown: windowState.whiteboardForceMarkdown ?? {},
+		noteLockSessionUnlocked: state.noteLockSessionUnlocked,
+		hasNoteLockKey: hasNoteLockKey(state.settings['syncInfoCache']),
 	};
 };
 

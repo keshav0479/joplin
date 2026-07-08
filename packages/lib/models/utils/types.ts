@@ -1,4 +1,5 @@
 import { SqlQuery } from '../../services/database/types';
+import type { DecryptedNoteLockKey } from '../../services/noteLock/NoteLockKey';
 
 export enum PaginationOrderDir {
 	ASC = 'ASC',
@@ -52,6 +53,11 @@ export interface SaveOptions {
 	dispatchOptions?: { preserveSelection: boolean };
 	disableReadOnlyCheck?: boolean;
 	useNoteLock?: boolean;
+	// Encrypt with this key captured when the note was decrypted, instead of the live session key.
+	// Lets a pending editor save complete after the session locks; a real key rotation still aborts it.
+	noteLockKey?: DecryptedNoteLockKey;
+	// Only setNoteLockState may flip is_locked; anything else fails closed on a transition.
+	allowNoteLockTransition?: boolean;
 
 	changeSource?: number;
 

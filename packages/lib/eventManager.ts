@@ -21,6 +21,7 @@ export enum EventName {
 	NoteResourceIndexed = 'noteResourceIndexed',
 	WindowOpen = 'windowOpen',
 	WindowClose = 'windowClose',
+	NoteLockSessionChange = 'noteLockSessionChange',
 }
 
 interface ItemChangeEvent {
@@ -66,6 +67,10 @@ export interface WindowCloseEvent {
 	windowId: string;
 }
 
+export interface NoteLockSessionChangeEvent {
+	unlocked: boolean;
+}
+
 type EventArgs = {
 	[EventName.ResourceCreate]: [];
 	[EventName.ResourceChange]: [ResourceChangeEvent];
@@ -83,6 +88,7 @@ type EventArgs = {
 	[EventName.NoteResourceIndexed]: [];
 	[EventName.WindowOpen]: [WindowOpenEvent];
 	[EventName.WindowClose]: [WindowCloseEvent];
+	[EventName.NoteLockSessionChange]: [NoteLockSessionChangeEvent];
 };
 
 type EventListenerCallbacks = {

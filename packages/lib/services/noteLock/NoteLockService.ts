@@ -40,6 +40,18 @@ export default class NoteLockService {
 		}
 	}
 
+	// Encrypts with a key captured earlier (e.g. when the note was decrypted for editing), so a
+	// session lock alone doesn't interrupt it. A real key rotation still aborts via the session check.
+	public static async encryptStringWithKey(plainText: string, key: DecryptedNoteLockKey) {
+		const session = NoteLockSession.instance();
+		const scoped = new NoteLockService(EncryptionService.instance(), () => key, keyId => session.assertCanEncryptWith(keyId));
+		try {
+			return await scoped.encryptString(plainText);
+		} finally {
+			scoped.revoke_();
+		}
+	}
+
 	public static destroyInstance() {
 		this.instance_ = null;
 	}

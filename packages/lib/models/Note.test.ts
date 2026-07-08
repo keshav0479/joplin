@@ -22,6 +22,7 @@ import getConflictFolderId from './utils/getConflictFolderId';
 import Revision from './Revision';
 import RevisionService from '../services/RevisionService';
 import NoteLockKey from '../services/noteLock/NoteLockKey';
+import NoteLockNote from '../services/noteLock/NoteLockNote';
 import NoteLockSession from '../services/noteLock/NoteLockSession';
 import NoteLockService from '../services/noteLock/NoteLockService';
 import EncryptionService from '../services/e2ee/EncryptionService';
@@ -317,13 +318,15 @@ describe('models/Note', () => {
 			...await Note.load(note.id, { useNoteLock: true }),
 			body: 'unlocked',
 			is_locked: 0,
-		}, { useNoteLock: true });
+		}, { useNoteLock: true, allowNoteLockTransition: true });
 		const unlockedNote = await Note.load(note.id);
 		expect(unlockedNote.body).toBe('unlocked');
 		expect(unlockedNote.extracted_resource_ids).toBe('');
 	});
 
-	it('should not decrypt locked notes while the feature is disabled', async () => {
+	// Safe handling of existing locked notes is deliberately not feature-flag gated: a locked note
+	// synced from another device must stay protected and recoverable even when the flag is off here.
+	it('should keep protecting and decrypting locked notes while the feature is disabled', async () => {
 		await NoteLockKey.instance().create('123456');
 		await NoteLockSession.instance().unlock('123456');
 		const note = await Note.save({
@@ -332,7 +335,85 @@ describe('models/Note', () => {
 		}, { useNoteLock: true });
 
 		Setting.setValue('featureFlag.noteLock', false);
-		expect((await Note.load(note.id, { useNoteLock: true })).body).toBe(note.body);
+		expect((await Note.load(note.id, { useNoteLock: true })).body).toBe('secret');
+		await expect(Note.save({ id: note.id, is_locked: 1, body: 'overwrite' })).rejects.toThrow('outside the note lock save path');
+	});
+
+	it('should encrypt a gated save with a captured key while the session is locked, but not after a key rotation', async () => {
+		await NoteLockKey.instance().create('123456');
+		await NoteLockSession.instance().unlock('123456');
+		const note = await Note.save({ body: 'secret', is_locked: 1 }, { useNoteLock: true });
+		const capturedKey = NoteLockSession.instance().decryptedKey();
+		NoteLockSession.instance().lock();
+
+		await Note.save({ ...await Note.load(note.id), body: 'updated' }, { useNoteLock: true, noteLockKey: capturedKey });
+		await NoteLockSession.instance().unlock('123456');
+		expect((await Note.load(note.id, { useNoteLock: true })).body).toBe('updated');
+
+		await NoteLockSession.instance().reset('654321');
+		const bodyBeforeStaleAttempt = (await Note.load(note.id)).body;
+		await expect(Note.save({ ...await Note.load(note.id), body: 'stale' }, { useNoteLock: true, noteLockKey: capturedKey })).rejects.toThrow('Note lock key changed during operation');
+		expect((await Note.load(note.id)).body).toBe(bodyBeforeStaleAttempt);
+	});
+
+	// The regression this covers: a save mutex registry that drops its entry while waiters are
+	// queued lets a third save, started only after a queued waiter took over the mutex, run on a
+	// fresh mutex and overlap it. So the third save here must start while the second holds the lock.
+	it('should serialize overlapping lock-aware saves, including queued waiters', async () => {
+		await NoteLockKey.instance().create('123456');
+		await NoteLockSession.instance().unlock('123456');
+		const note = await Note.save({ body: 'secret', is_locked: 1 }, { useNoteLock: true });
+		const capturedKey = NoteLockSession.instance().decryptedKey();
+
+		const original = NoteLockNote.prepareForSave.bind(NoteLockNote);
+		let active = 0;
+		let maxActive = 0;
+		let call = 0;
+		let onSecondSaveHoldingLock: ()=> void = null;
+		const secondSaveHoldsLock = new Promise<void>(resolve => { onSecondSaveHoldingLock = resolve; });
+		let releaseSecondSave: ()=> void = null;
+		const secondSaveGate = new Promise<void>(resolve => { releaseSecondSave = resolve; });
+		const prepareMock = jest.spyOn(NoteLockNote, 'prepareForSave').mockImplementation(async (...args) => {
+			active++;
+			maxActive = Math.max(maxActive, active);
+			if (++call === 2) {
+				onSecondSaveHoldingLock();
+				await secondSaveGate;
+			}
+			try {
+				return await original(...args);
+			} finally {
+				active--;
+			}
+		});
+
+		try {
+			const base = await Note.load(note.id);
+			const saveEdit = (i: number) => Note.save({ ...base, body: `edit ${i}` }, { useNoteLock: true, noteLockKey: capturedKey });
+
+			const first = saveEdit(1);
+			const second = saveEdit(2);
+			await secondSaveHoldsLock;
+			const third = saveEdit(3);
+			// Give the third save the chance to (wrongly) enter while the second is held open.
+			await new Promise(resolve => setTimeout(resolve, 20));
+			releaseSecondSave();
+			await Promise.all([first, second, third]);
+			expect(maxActive).toBe(1);
+		} finally {
+			prepareMock.mockRestore();
+		}
+	});
+
+	it('should not let a save flip the lock state outside the note lock state path', async () => {
+		await NoteLockKey.instance().create('123456');
+		await NoteLockSession.instance().unlock('123456');
+		const locked = await Note.save({ body: 'secret', is_locked: 1 }, { useNoteLock: true });
+		const plain = await Note.save({ body: 'plain' });
+
+		await expect(Note.save({ ...await Note.load(locked.id, { useNoteLock: true }), is_locked: 0 }, { useNoteLock: true })).rejects.toThrow('outside the note lock state path');
+		await expect(Note.save({ ...await Note.load(plain.id), is_locked: 1 }, { useNoteLock: true })).rejects.toThrow('outside the note lock state path');
+		expect((await Note.load(plain.id)).is_locked).toBe(0);
 	});
 
 	it('should fail closed when note lock encryption cannot decrypt or encrypt', async () => {
@@ -381,7 +462,7 @@ describe('models/Note', () => {
 		await Note.save({
 			...await Note.load(note.id),
 			is_locked: 1,
-		}, { useNoteLock: true });
+		}, { useNoteLock: true, allowNoteLockTransition: true });
 
 		expect(await Revision.countRevisions(Note.modelType(), note.id)).toBe(1);
 		expect(await Revision.load(encryptedRevision.id)).toBeTruthy();

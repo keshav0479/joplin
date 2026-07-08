@@ -18,11 +18,14 @@ export const runtime = (): CommandRuntime => {
 
 			try {
 				const note = await Note.load(noteId);
+				// The enabled condition can be bypassed when the command is executed directly (e.g. via
+				// toggleExternalEditing): the external editor would get ciphertext, or write plaintext to disk.
+				if (note.is_locked) return;
 				void ExternalEditWatcher.instance().openAndWatch(note);
 			} catch (error) {
 				bridge().showErrorMessageBox(_('Error opening note in editor: %s', error.message));
 			}
 		},
-		enabledCondition: 'oneNoteSelected && !noteIsReadOnly',
+		enabledCondition: 'oneNoteSelected && !noteIsReadOnly && !noteIsLocked',
 	};
 };

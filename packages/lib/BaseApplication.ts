@@ -410,6 +410,10 @@ export default class BaseApplication {
 			'syncInfoCache': async () => {
 				appLogger.info('"syncInfoCache" was changed - setting up encryption related code');
 
+				// The note lock session only detects a synced key change lazily; polling here locks
+				// it (and notifies the UI) as soon as the change arrives.
+				NoteLockSession.instance().isUnlocked();
+
 				await loadMasterKeysFromSettings(EncryptionService.instance());
 				const loadedMasterKeyIds = EncryptionService.instance().loadedMasterKeyIds();
 

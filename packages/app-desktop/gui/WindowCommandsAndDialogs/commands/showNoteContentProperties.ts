@@ -26,6 +26,6 @@ export const runtime = (comp: WindowControl): CommandRuntime => {
 			}
 		},
 
-		enabledCondition: 'oneNoteSelected',
+		enabledCondition: 'oneNoteSelected && !noteIsLocked',
 	};
 };

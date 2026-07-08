@@ -181,6 +181,7 @@ export interface State extends WindowState {
 	editorNoteStatuses: EditorNoteStatuses;
 	isInsertingNotes: boolean;
 	hasEncryptedItems: boolean;
+	noteLockSessionUnlocked: boolean;
 	needApiAuth: boolean;
 	profileConfig: ProfileConfig;
 	noteListRendererIds: string[];
@@ -252,6 +253,7 @@ export const defaultState: State = {
 	editorNoteStatuses: {},
 	isInsertingNotes: false,
 	hasEncryptedItems: false,
+	noteLockSessionUnlocked: false,
 	needApiAuth: false,
 	profileConfig: null,
 	noteListRendererIds: getListRendererIds(),
@@ -1508,6 +1510,10 @@ const reducer = produce((draft: Draft<State> = defaultState, action: any) => {
 
 		case 'ENCRYPTION_HAS_DISABLED_ITEMS':
 			draft.hasDisabledEncryptionItems = action.value;
+			break;
+
+		case 'NOTE_LOCK_SESSION_UNLOCKED_SET':
+			draft.noteLockSessionUnlocked = action.value;
 			break;
 
 		case 'CLIPPER_SERVER_SET':

@@ -1,4 +1,5 @@
 import BaseModel, { DeleteOptions, ModelType } from '../BaseModel';
+import { Mutex } from 'async-mutex';
 import BaseItem from './BaseItem';
 import type FolderClass from './Folder';
 import type ResourceClass from './Resource';
@@ -27,7 +28,6 @@ const { isImageMimeType } = require('../resourceUtils');
 import { MarkupToHtml } from '@joplin/renderer';
 import { ALL_NOTES_FILTER_ID } from '../reserved-ids';
 import NoteLockNote from '../services/noteLock/NoteLockNote';
-import isNoteLockEnabled from '../services/noteLock/isNoteLockEnabled';
 import isItemId from './utils/isItemId';
 
 export interface PreviewsOrder {
@@ -803,23 +803,13 @@ export default class Note extends BaseItem {
 
 	public static async load(id: string, options: LoadOptions = null): Promise<NoteEntity> {
 		const note = await super.load(id, options);
-		if (isNoteLockEnabled() && !!options?.useNoteLock) return NoteLockNote.decryptBody(note);
+		if (options?.useNoteLock) return NoteLockNote.decryptBody(note);
 		return note;
 	}
 
 	public static async save(o: NoteEntity, options: SaveOptions = null): Promise<NoteEntity> {
 		const isNew = this.isNew(o, options);
 
-		// If true, this is a provisional note - it will be saved permanently
-		// only if the user makes changes to it.
-		const isProvisional = options && !!options.provisional;
-
-		// If true, saving the note will not change the provisional flag of the
-		// note. This is used for background processing that it not initiated by
-		// the user. For example when setting the geolocation of a note.
-		const ignoreProvisionalFlag = options && !!options.ignoreProvisionalFlag;
-
-		const dispatchUpdateAction = options ? options.dispatchUpdateAction !== false : true;
 		if (isNew && !o.source) o.source = Setting.value('appName');
 		if (isNew && !o.source_application) o.source_application = Setting.value('appId');
 		if (isNew && !('order' in o)) o.order = Date.now();
@@ -847,9 +837,65 @@ export default class Note extends BaseItem {
 		// now cache note ids for notes which were changed since the last collection, in order to determine whether
 		// we should set beforeNoteJson to the current contents in the database, or the last value which was stored
 		// in the item_changes table
+		// The lock-state guards below validate against the freshly loaded note, so the span from
+		// that read to the write must be serialized per note - otherwise a stale save that passed
+		// the guards could commit after a concurrent enable/disable and undo the encryption. A
+		// dedicated mutex is used because BaseModel's saveMutex drops its registry entry while
+		// waiters are still queued, and is acquired again inside super.save, so sharing it would deadlock.
+		const noteLockMutexRelease = o.id && ('is_locked' in o || options?.useNoteLock) ? await this.acquireNoteLockSaveMutex_(o.id) : null;
+
+		try {
+			return await this.saveWithNoteLockGuards_(o, options, isNew, changeSource);
+		} finally {
+			if (noteLockMutexRelease) noteLockMutexRelease();
+		}
+	}
+
+	private static noteLockSaveMutexes_: Map<string, { mutex: Mutex; pending: number }> = new Map();
+
+	private static async acquireNoteLockSaveMutex_(noteId: string) {
+		let entry = this.noteLockSaveMutexes_.get(noteId);
+		if (!entry) {
+			entry = { mutex: new Mutex(), pending: 0 };
+			this.noteLockSaveMutexes_.set(noteId, entry);
+		}
+		entry.pending++;
+		const release = await entry.mutex.acquire();
+		return () => {
+			release();
+			entry.pending--;
+			if (!entry.pending) this.noteLockSaveMutexes_.delete(noteId);
+		};
+	}
+
+	private static async saveWithNoteLockGuards_(o: NoteEntity, options: SaveOptions, isNew: boolean, changeSource: number): Promise<NoteEntity> {
+		// If true, this is a provisional note - it will be saved permanently
+		// only if the user makes changes to it.
+		const isProvisional = options && !!options.provisional;
+
+		// If true, saving the note will not change the provisional flag of the
+		// note. This is used for background processing that it not initiated by
+		// the user. For example when setting the geolocation of a note.
+		const ignoreProvisionalFlag = options && !!options.ignoreProvisionalFlag;
+
+		const dispatchUpdateAction = options ? options.dispatchUpdateAction !== false : true;
+
 		const oldNote = !isNew && o.id ? await Note.load(o.id) : null;
-		if (isNoteLockEnabled() && !!options?.useNoteLock) {
-			await NoteLockNote.prepareForSave(o, this.linkedItemIds, this.serializeExtractedResourceIds, isNew);
+		// A locked note's stored body is ciphertext, so a non-gated body write would overwrite it with
+		// stale plaintext (e.g. a pending editor autosave from before the note was locked). Sync and
+		// decryption legitimately write ciphertext bodies, so they are exempt. Deliberately not
+		// feature-flag gated: locked notes synced from another device must stay protected even
+		// when the flag is off on this one.
+		if (!options?.useNoteLock && NoteLockNote.isLocked(oldNote) && 'body' in o && o.body !== oldNote.body && changeSource !== ItemChange.SOURCE_SYNC && changeSource !== ItemChange.SOURCE_DECRYPTION) {
+			throw new Error(`Cannot save the body of a locked note outside the note lock save path: ${o.id}`);
+		}
+		// Only setNoteLockState may flip the lock state; a save carrying a stale snapshot (e.g. an
+		// editor save racing an enable/disable from elsewhere) fails instead of flipping it back.
+		if (oldNote && 'is_locked' in o && !!o.is_locked !== !!oldNote.is_locked && !options?.allowNoteLockTransition && changeSource !== ItemChange.SOURCE_SYNC && changeSource !== ItemChange.SOURCE_DECRYPTION) {
+			throw new Error(`Cannot change the lock state of a note outside the note lock state path: ${o.id}`);
+		}
+		if (options?.useNoteLock) {
+			await NoteLockNote.prepareForSave(o, this.linkedItemIds, this.serializeExtractedResourceIds, isNew, options.noteLockKey);
 		}
 
 		syncDebugLog.info('Save Note: P:', oldNote);
@@ -859,7 +905,9 @@ export default class Note extends BaseItem {
 		// has just been downloaded from the sync target and save is invoked when the note has not yet been decrypted
 		if (oldNote && !oldNote.encryption_applied) {
 			const changedSinceCollection = this.revisionService().changedSinceCollection(o.id);
-			if (isNoteLockEnabled() && NoteLockNote.isLocked(o)) {
+			// A partial save (e.g. a metadata-only update) may omit is_locked, so fall back to the
+			// stored note - otherwise the revision snapshot would capture the ciphertext body.
+			if (NoteLockNote.isLocked('is_locked' in o ? o : oldNote)) {
 				beforeNoteJson = null;
 			} else if (changedSinceCollection) {
 				beforeNoteJson = await ItemChange.oldNoteContent(o.id);
@@ -883,7 +931,7 @@ export default class Note extends BaseItem {
 
 		let savedNote = await super.save(o, options);
 
-		if (isNoteLockEnabled() && !!options?.useNoteLock && NoteLockNote.isLocking(o, oldNote)) {
+		if (options?.useNoteLock && NoteLockNote.isLocking(o, oldNote)) {
 			await ItemChange.waitForAllSaved();
 			await this.revisionService().deleteUnencryptedHistoryForNote(savedNote.id, { sourceDescription: 'Note.save: note lock' });
 		}

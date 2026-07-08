@@ -1,4 +1,5 @@
 import Note from '@joplin/lib/models/Note';
+import Setting from '@joplin/lib/models/Setting';
 import { setupDatabaseAndSynchronizer, supportDir, switchClient } from '@joplin/lib/testing/test-utils';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import useFormNote, { HookDependencies } from './useFormNote';
@@ -6,6 +7,8 @@ import shim from '@joplin/lib/shim';
 import Resource from '@joplin/lib/models/Resource';
 import { join } from 'path';
 import { formNoteToNote } from '.';
+import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
 
 const defaultFormNoteProps: HookDependencies = {
 	noteId: '',
@@ -16,12 +19,89 @@ const defaultFormNoteProps: HookDependencies = {
 	onAfterLoad: () => { },
 	editorId: 'editor',
 	builtInEditorVisible: false,
+	noteLockSessionUnlocked: false,
 };
 
 describe('useFormNote', () => {
 	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
+	});
+
+	// The session and decryption internals are covered by the lib tests; here they are mocked to
+	// test only the hook's gating: ciphertext must never reach the form note.
+	it('should never expose a locked note body: blank it while the session is locked, decrypt it while unlocked', async () => {
+		Setting.setValue('featureFlag.noteLock', true);
+		// A direct save of a new note with is_locked keeps the raw body, standing in for ciphertext.
+		const testNote = await Note.save({ title: 'Locked note', body: 'ciphertext', is_locked: 1 });
+
+		const isUnlockedMock = jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValue(false);
+		const decryptedKeyMock = jest.spyOn(NoteLockSession.instance(), 'decryptedKey').mockReturnValue({ id: 'key-id', plainText: 'key' });
+		const decryptBodyMock = jest.spyOn(NoteLockNote, 'decryptBody').mockImplementation(async note => ({ ...note, body: 'secret content' }));
+
+		try {
+			const lockedRender = renderHook(props => useFormNote(props), {
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id },
+			});
+			await waitFor(() => {
+				expect(lockedRender.result.current.formNote.id).toBe(testNote.id);
+			});
+			expect(lockedRender.result.current.formNote).toMatchObject({
+				is_locked: 1,
+				lockedBodyUnavailable: true,
+				body: '',
+			});
+			lockedRender.unmount();
+
+			isUnlockedMock.mockReturnValue(true);
+			const unlockedRender = renderHook(props => useFormNote(props), {
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true },
+			});
+			await waitFor(() => {
+				expect(unlockedRender.result.current.formNote.id).toBe(testNote.id);
+			});
+			expect(unlockedRender.result.current.formNote).toMatchObject({
+				is_locked: 1,
+				lockedBodyUnavailable: false,
+				body: 'secret content',
+				noteLockKey: { id: 'key-id', plainText: 'key' },
+			});
+			unlockedRender.unmount();
+
+			// A decryption failure while unlocked must also keep the body out of the form note.
+			decryptBodyMock.mockRejectedValue(new Error('key mismatch'));
+			const failedRender = renderHook(props => useFormNote(props), {
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true },
+			});
+			await waitFor(() => {
+				expect(failedRender.result.current.formNote.id).toBe(testNote.id);
+			});
+			expect(failedRender.result.current.formNote).toMatchObject({
+				lockedBodyUnavailable: true,
+				body: '',
+			});
+			failedRender.unmount();
+
+			// Safe handling is not feature-flag gated: a synced locked note stays blanked with the flag off.
+			Setting.setValue('featureFlag.noteLock', false);
+			isUnlockedMock.mockReturnValue(false);
+			const flagOffRender = renderHook(props => useFormNote(props), {
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id },
+			});
+			await waitFor(() => {
+				expect(flagOffRender.result.current.formNote.id).toBe(testNote.id);
+			});
+			expect(flagOffRender.result.current.formNote).toMatchObject({
+				lockedBodyUnavailable: true,
+				body: '',
+			});
+			flagOffRender.unmount();
+		} finally {
+			isUnlockedMock.mockRestore();
+			decryptedKeyMock.mockRestore();
+			decryptBodyMock.mockRestore();
+			Setting.setValue('featureFlag.noteLock', false);
+		}
 	});
 
 	it('should update note when decryption completes', async () => {

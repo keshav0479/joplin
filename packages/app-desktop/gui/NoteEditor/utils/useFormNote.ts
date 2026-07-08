@@ -15,6 +15,8 @@ import Logger from '@joplin/utils/Logger';
 import eventManager, { EventName } from '@joplin/lib/eventManager';
 import DecryptionWorker from '@joplin/lib/services/DecryptionWorker';
 import useQueuedAsyncEffect from '@joplin/lib/hooks/useQueuedAsyncEffect';
+import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
 
 const logger = Logger.create('useFormNote');
 
@@ -31,6 +33,7 @@ export interface HookDependencies {
 	onBeforeLoad(event: OnLoadEvent): void;
 	onAfterLoad(event: OnLoadEvent): void;
 	builtInEditorVisible: boolean;
+	noteLockSessionUnlocked: boolean;
 }
 
 type MapFormNoteCallback = (previousFormNote: FormNote)=> FormNote;
@@ -67,11 +70,12 @@ function resourceInfosChanged(a: ResourceInfos, b: ResourceInfos): boolean {
 }
 
 type InitNoteStateCallback = (note: NoteEntity, isNew: boolean)=> Promise<FormNote>;
-const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, builtInEditorVisible: boolean) => {
+const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, builtInEditorVisible: boolean, noteLockSessionUnlocked: boolean) => {
 	// Increasing the value of this counter cancels any ongoing note refreshes and starts
 	// a new refresh.
 	const [formNoteRefreshScheduled, setFormNoteRefreshScheduled] = useState<number>(0);
 	const prevBuiltInEditorVisible = usePrevious<boolean>(builtInEditorVisible);
+	const prevNoteLockSessionUnlocked = usePrevious<boolean>(noteLockSessionUnlocked);
 
 	useQueuedAsyncEffect(async (event) => {
 		if (formNoteRefreshScheduled <= 0) return;
@@ -124,6 +128,13 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 		}
 	}, [builtInEditorVisible, prevBuiltInEditorVisible, refreshFormNote]);
 
+	// Unlocking makes a locked note's plaintext loadable, locking must drop it - reload to recompute.
+	useEffect(() => {
+		if (prevNoteLockSessionUnlocked === undefined || prevNoteLockSessionUnlocked === noteLockSessionUnlocked) return;
+		if (!formNoteRef.current.is_locked) return;
+		refreshFormNote();
+	}, [noteLockSessionUnlocked, prevNoteLockSessionUnlocked, formNoteRef, refreshFormNote]);
+
 
 	useEffect(() => {
 		if (!noteId) return ()=>{};
@@ -153,7 +164,7 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 
 export default function useFormNote(dependencies: HookDependencies) {
 	const {
-		noteId, isProvisional, titleInputRef, editorRef, onBeforeLoad, onAfterLoad, builtInEditorVisible, editorId,
+		noteId, isProvisional, titleInputRef, editorRef, onBeforeLoad, onAfterLoad, builtInEditorVisible, editorId, noteLockSessionUnlocked,
 	} = dependencies;
 
 	const [formNote, setFormNote] = useState<FormNote>(defaultFormNote());
@@ -165,6 +176,32 @@ export default function useFormNote(dependencies: HookDependencies) {
 	formNoteRef.current = formNote;
 
 	const initNoteState: InitNoteStateCallback = useCallback(async (n, isNewNote) => {
+		// Not feature-flag gated: a synced locked note must be handled safely with the flag off. Its
+		// stored body is ciphertext and must never reach the form note - a save would corrupt the note.
+		let lockedBodyUnavailable = false;
+		let noteLockKey = null;
+		if (NoteLockNote.isLocked(n)) {
+			let decrypted: NoteEntity = null;
+			if (NoteLockSession.instance().isUnlocked()) {
+				try {
+					decrypted = await NoteLockNote.decryptBody(n);
+					// Capture the key with the plaintext so pending saves can re-encrypt even after
+					// the session locks. Throws if the session locked while decryption was in flight.
+					noteLockKey = NoteLockSession.instance().decryptedKey();
+				} catch (error) {
+					logger.warn('Could not decrypt locked note body:', n.id, error);
+					decrypted = null;
+				}
+			}
+			if (decrypted) {
+				n = decrypted;
+			} else {
+				n = { ...n, body: '' };
+				lockedBodyUnavailable = true;
+				noteLockKey = null;
+			}
+		}
+
 		let originalCss = '';
 
 		if (n.markup_language === MarkupToHtml.MARKUP_LANGUAGE_HTML) {
@@ -188,6 +225,9 @@ export default function useFormNote(dependencies: HookDependencies) {
 			hasChanged: false,
 			user_updated_time: n.user_updated_time,
 			encryption_applied: n.encryption_applied,
+			is_locked: n.is_locked,
+			lockedBodyUnavailable,
+			noteLockKey,
 		};
 
 		logger.debug('Initializing note state');
@@ -215,7 +255,7 @@ export default function useFormNote(dependencies: HookDependencies) {
 		return newFormNote;
 	}, []);
 
-	useRefreshFormNoteOnChange(formNoteRef, editorId, noteId, initNoteState, builtInEditorVisible);
+	useRefreshFormNoteOnChange(formNoteRef, editorId, noteId, initNoteState, builtInEditorVisible, noteLockSessionUnlocked);
 
 	useEffect(() => {
 		if (!noteId) {
