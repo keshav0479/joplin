@@ -769,7 +769,7 @@ class Application extends BaseApplication {
 		addTask('app/listen for note lock session events', () => {
 			eventManager.on(EventName.NoteLockSessionChange, (event) => {
 				this.dispatch({
-					type: 'NOTE_LOCK_SESSION_UNLOCKED_SET',
+					type: 'SET_NOTE_LOCK_SESSION_UNLOCKED',
 					value: event.unlocked,
 				});
 			});

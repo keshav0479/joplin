@@ -2,6 +2,7 @@ import { _ } from '../../locale';
 import CommandService from '../CommandService';
 import { ItemFlow, ListRenderer, OnClickEvent } from '../plugins/api/noteListType';
 import checkboxPieCss from './checkboxPieCss';
+import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 
 const renderer: ListRenderer = {
 	id: 'detailed',
@@ -150,6 +151,7 @@ const renderer: ListRenderer = {
 	onRenderNote: async (props: any) => {
 		return {
 			...props,
+			note: { ...props.note, is_locked: isNoteLockEnabled() ? props.note.is_locked : 0 },
 		};
 	},
 };

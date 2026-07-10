@@ -8,11 +8,13 @@ import type { Dispatch } from 'redux';
 import eventManager, { EventName } from '@joplin/lib/eventManager';
 import type { OnSetFormNote } from './useFormNote';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 
 const logger = Logger.create('useScheduleSaveCallbacks');
 
 interface Props {
 	setFormNote: RefObject<OnSetFormNote>;
+	formNote: RefObject<FormNote>;
 	editorId: string;
 	dispatch: Dispatch;
 	editorRef: RefObject<NoteBodyEditorRef>;
@@ -34,28 +36,22 @@ const useScheduleSaveCallbacks = (props: Props) => {
 
 		const makeAction = (formNote: FormNote) => {
 			return async function() {
-				const useNoteLock = !!formNote.is_locked;
+				const useNoteLock = isNoteLockEnabled();
+				// The lock state may change between scheduling and execution (e.g. encryption enabled
+				// from the note list menu), so the save uses the latest form state for this note.
+				const latestFormNote = props.formNote.current?.id === formNote.id ? props.formNote.current : formNote;
+				const isLocked = useNoteLock && !!latestFormNote.is_locked;
 
 				try {
 					// The blank placeholder body would be encrypted over the real content.
-					if (useNoteLock && formNote.lockedBodyUnavailable) {
+					if (isLocked && formNote.lockedBodyUnavailable) {
 						logger.error('Prevented saving a locked note whose body was never decrypted:', formNote.id);
 						return;
 					}
 
-					// Note.save rejects lock-state transitions at the model boundary; this early check just
-					// avoids that error path when enable/disable changed the state under the editor.
-					if (useNoteLock && formNote.id) {
-						const current = await Note.load(formNote.id, { fields: ['id', 'is_locked'] });
-						if (!current || !current.is_locked) {
-							logger.warn('Locked note is gone or no longer locked - keeping the change in the editor:', formNote.id);
-							return;
-						}
-					}
-
-					const note = await formNoteToNote(formNote);
-					logger.debug('Saving note...', useNoteLock ? note.id : note);
-					const savedNote = await Note.save(note, { changeId: `editorChange-${props.editorId}`, useNoteLock, noteLockKey: useNoteLock ? formNote.noteLockKey : null });
+					const note = await formNoteToNote({ ...formNote, is_locked: latestFormNote.is_locked });
+					logger.debug('Saving note...', isLocked ? note.id : note);
+					const savedNote = await Note.save(note, { changeId: `editorChange-${props.editorId}`, useNoteLock, noteLockKey: useNoteLock ? latestFormNote.noteLockKey : null });
 
 					props.setFormNote.current((prev: FormNote) => {
 						if (prev.id !== formNote.id) return prev;
@@ -65,14 +61,13 @@ const useScheduleSaveCallbacks = (props: Props) => {
 						const hasNewerChanges = !isLatestSave || prev.bodyWillChangeId !== 0;
 						// Once the plaintext of a locked note is safely persisted and the session is
 						// locked, neither it nor the captured key may stay in memory.
-						if (useNoteLock && !hasNewerChanges && !NoteLockSession.instance().isUnlocked()) {
+						if (isLocked && !hasNewerChanges && !NoteLockSession.instance().isUnlocked()) {
 							return { ...prev, user_updated_time: savedNote.user_updated_time, hasChanged: false, body: '', noteLockKey: null, lockedBodyUnavailable: true };
 						}
 						return { ...prev, user_updated_time: savedNote.user_updated_time, hasChanged: hasNewerChanges ? prev.hasChanged : false };
 					});
 
-					// savedNote.body is ciphertext for a locked note; keep it out of the watched file.
-					if (!useNoteLock) void ExternalEditWatcher.instance().updateNoteFile(savedNote);
+					void ExternalEditWatcher.instance().updateNoteFile(savedNote);
 
 					eventManager.emit(EventName.NoteContentChange, { note: savedNote });
 				} catch (error) {
@@ -90,7 +85,7 @@ const useScheduleSaveCallbacks = (props: Props) => {
 
 		formNote.saveActionQueue.push(makeAction(formNote));
 		return formNote.saveActionQueue.waitForAllDone();
-	}, [props.dispatch, props.editorId, props.setFormNote]);
+	}, [props.dispatch, props.editorId, props.setFormNote, props.formNote]);
 
 	const saveNoteIfWillChange = useCallback(async (formNote: FormNote) => {
 		if (!formNote.id || !formNote.bodyWillChangeId || !props.editorRef.current) return;

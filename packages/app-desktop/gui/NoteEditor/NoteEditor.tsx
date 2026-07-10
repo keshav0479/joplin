@@ -18,7 +18,7 @@ import styles_ from './styles';
 import { NoteEditorProps, FormNote, OnChangeEvent, AllAssetsOptions, NoteBodyEditorRef, NoteBodyEditorPropsAndRef, NoteBodyEditorType } from './utils/types';
 import CommandService from '@joplin/lib/services/CommandService';
 import Button, { ButtonLevel } from '../Button/Button';
-import eventManager, { EventName } from '@joplin/lib/eventManager';
+import eventManager, { EventName, NoteLockNoteStateChangeEvent } from '@joplin/lib/eventManager';
 import { AppState } from '../../app.reducer';
 import ToolbarButtonUtils, { ToolbarButtonInfo } from '@joplin/lib/services/commands/ToolbarButtonUtils';
 import { _, _n } from '@joplin/lib/locale';
@@ -29,6 +29,7 @@ import stateToWhenClauseContext from '../../services/commands/stateToWhenClauseC
 import ExternalEditWatcher from '@joplin/lib/services/ExternalEditWatcher';
 import { itemIsReadOnly } from '@joplin/lib/models/utils/readOnly';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import { SyncInfo } from '@joplin/lib/services/synchronizer/syncInfoUtils';
 import NoteLockPanel from './NoteLockPanel/NoteLockPanel';
 import { themeStyle } from '@joplin/lib/theme';
@@ -95,14 +96,15 @@ function NoteEditorContent(props: NoteEditorProps) {
 	}, []);
 
 	const setFormNoteRef = useRef<OnSetFormNote>(null);
+	const formNoteRef = useRef<FormNote>(null);
 	const { saveNoteIfWillChange, scheduleSaveNote } = useScheduleSaveCallbacks({
-		setFormNote: setFormNoteRef, dispatch: props.dispatch, editorRef, editorId,
+		setFormNote: setFormNoteRef, formNote: formNoteRef, dispatch: props.dispatch, editorRef, editorId,
 	});
 	const formNote_beforeLoad = useCallback(async (event: OnLoadEvent) => {
 		await saveNoteIfWillChange(event.formNote);
 		// The lock must wait for the pending saves of the note being left: a locked note's save
 		// needs the unlocked session to encrypt, so locking first would drop the last edits.
-		if (event.formNote.id && Setting.value('noteLock.lockOnNoteSwitch')) {
+		if (isNoteLockEnabled() && event.formNote.id && Setting.value('noteLock.lockOnNoteSwitch')) {
 			await event.formNote.saveActionQueue?.waitForAllDone();
 			NoteLockSession.instance().lock();
 		}
@@ -129,8 +131,23 @@ function NoteEditorContent(props: NoteEditorProps) {
 		noteLockSessionUnlocked: props.noteLockSessionUnlocked,
 	});
 	setFormNoteRef.current = setFormNote;
-	const formNoteRef = useRef<FormNote>(formNote);
 	formNoteRef.current = { ...formNote };
+
+	useEffect(() => {
+		if (!isNoteLockEnabled()) return () => {};
+		// Pending scheduled saves read the lock state from the form note, so it must follow an
+		// enable/disable triggered outside the editor (note list menu, another window) immediately.
+		const onLockStateChange = (event: NoteLockNoteStateChangeEvent) => {
+			// Enabling requires an unlocked session, so capture the key the same way a decrypt
+			// does - a pending save can then still encrypt if the session locks before it runs.
+			const noteLockKey = event.isLocked && NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
+			setFormNote(prev => prev.id === event.noteId ? { ...prev, is_locked: event.isLocked ? 1 : 0, noteLockKey } : prev);
+		};
+		eventManager.on(EventName.NoteLockNoteStateChange, onLockStateChange);
+		return () => {
+			eventManager.off(EventName.NoteLockNoteStateChange, onLockStateChange);
+		};
+	}, [setFormNote]);
 
 	const formNoteFolder = useFolder({ folderId: formNote.parent_id });
 
@@ -677,7 +694,7 @@ function NoteEditorContent(props: NoteEditorProps) {
 	// A locked note only mounts once its plaintext was loaded through the gated path. A note
 	// with pending changes stays mounted on lock, so the unsaved plaintext is not thrown away
 	// before its re-queued save runs on the next unlock.
-	if (formNote.is_locked && (formNote.lockedBodyUnavailable || (!props.noteLockSessionUnlocked && !formNote.hasChanged))) {
+	if (isNoteLockEnabled() && formNote.is_locked && (formNote.lockedBodyUnavailable || (!props.noteLockSessionUnlocked && !formNote.hasChanged))) {
 		return (
 			<div style={styles.root} ref={containerRef}>
 				<NoteLockPanel

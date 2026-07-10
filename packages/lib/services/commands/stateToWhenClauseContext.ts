@@ -9,6 +9,7 @@ import ItemChange from '../../models/ItemChange';
 import { getTrashFolderId } from '../trash';
 import getActivePluginEditorView from '../plugins/utils/getActivePluginEditorView';
 import { MarkupLanguage } from '@joplin/renderer';
+import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 
 export interface WhenClauseContextOptions {
 	commandFolderId?: string;
@@ -116,7 +117,7 @@ export default function stateToWhenClauseContext(state: State, options: WhenClau
 		noteTodoCompleted: selectedNote ? !!selectedNote.todo_completed : false,
 		noteIsMarkdown: selectedNote ? selectedNote.markup_language === MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN : false,
 		noteIsHtml: selectedNote ? selectedNote.markup_language === MarkupToHtml.MARKUP_LANGUAGE_HTML : false,
-		noteIsLocked: selectedNote ? !!selectedNote.is_locked : false,
+		noteIsLocked: selectedNote && isNoteLockEnabled() ? !!selectedNote.is_locked : false,
 		noteLockSessionUnlocked: state.noteLockSessionUnlocked,
 		noteIsReadOnly: selectedNote ? itemIsReadOnlySync(ModelType.Note, ItemChange.SOURCE_UNSPECIFIED, selectedNote as ItemSlice, settings['sync.userId'], state.shareService) : false,
 		noteIsDeleted: selectedNote ? !!selectedNote.deleted_time : false,

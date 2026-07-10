@@ -5,6 +5,7 @@ import Note from '../../models/Note';
 import Setting from '../../models/Setting';
 import { itemIsReadOnlySync, ItemSlice } from '../../models/utils/readOnly';
 import { NoteEntity } from '../database/types';
+import eventManager, { EventName } from '../../eventManager';
 import isNoteLockEnabled from './isNoteLockEnabled';
 
 // The UI hides the enable/disable actions for these cases, but the commands can also be
@@ -20,13 +21,15 @@ const checkCanChangeLockState = (note: NoteEntity, noteId: string) => {
 export const enableNoteLock = async (noteId: string) => {
 	const note = await Note.load(noteId);
 	checkCanChangeLockState(note, noteId);
-	if (note.is_locked) return note;
-	return Note.save({ ...note, is_locked: 1 }, { useNoteLock: true, allowNoteLockTransition: true });
+	if (note.is_locked) throw new Error(`Note is already locked: ${noteId}`);
+	await Note.save({ ...note, is_locked: 1 }, { useNoteLock: true, allowNoteLockTransition: true });
+	eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked: true });
 };
 
 export const disableNoteLock = async (noteId: string) => {
 	const note = await Note.load(noteId, { useNoteLock: true });
 	checkCanChangeLockState(note, noteId);
-	if (!note.is_locked) return note;
-	return Note.save({ ...note, is_locked: 0 }, { useNoteLock: true, allowNoteLockTransition: true });
+	if (!note.is_locked) throw new Error(`Note is not locked: ${noteId}`);
+	await Note.save({ ...note, is_locked: 0 }, { useNoteLock: true, allowNoteLockTransition: true });
+	eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked: false });
 };

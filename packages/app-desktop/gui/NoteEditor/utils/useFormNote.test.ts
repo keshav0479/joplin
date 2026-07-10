@@ -82,7 +82,6 @@ describe('useFormNote', () => {
 			});
 			failedRender.unmount();
 
-			// Safe handling is not feature-flag gated: a synced locked note stays blanked with the flag off.
 			Setting.setValue('featureFlag.noteLock', false);
 			isUnlockedMock.mockReturnValue(false);
 			const flagOffRender = renderHook(props => useFormNote(props), {
@@ -92,8 +91,8 @@ describe('useFormNote', () => {
 				expect(flagOffRender.result.current.formNote.id).toBe(testNote.id);
 			});
 			expect(flagOffRender.result.current.formNote).toMatchObject({
-				lockedBodyUnavailable: true,
-				body: '',
+				lockedBodyUnavailable: false,
+				body: 'ciphertext',
 			});
 			flagOffRender.unmount();
 		} finally {

@@ -1,6 +1,7 @@
 import { _ } from '../../locale';
 import { MarkupLanguage, MarkupToHtml } from '@joplin/renderer';
 import { ItemFlow, ListRenderer } from '../plugins/api/noteListType';
+import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 
 interface Props {
 	note: {
@@ -165,11 +166,13 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 
 	onRenderNote: async (props: Props) => {
 		const markupToHtml_ = new MarkupToHtml();
+		const isLocked = isNoteLockEnabled() ? props.note.is_locked : 0;
 
 		return {
 			...props,
+			note: { ...props.note, is_locked: isLocked },
 			// A locked note's body is ciphertext, so there is no meaningful preview to show.
-			notePreview: props.note.is_locked ? '' : markupToHtml_.stripMarkup(MarkupLanguage.Markdown, props.note.body).substring(0, 200),
+			notePreview: isLocked ? '' : markupToHtml_.stripMarkup(MarkupLanguage.Markdown, props.note.body).substring(0, 200),
 			titleWidth: props.item.size.width - 32,
 		};
 	},

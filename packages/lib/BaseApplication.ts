@@ -73,6 +73,7 @@ import getAppName from './getAppName';
 import PerformanceLogger from './PerformanceLogger';
 import Synchronizer from './Synchronizer';
 import NoteLockKey from './services/noteLock/NoteLockKey';
+import isNoteLockEnabled from './services/noteLock/isNoteLockEnabled';
 import NoteLockSession from './services/noteLock/NoteLockSession';
 import NoteLockService from './services/noteLock/NoteLockService';
 
@@ -412,7 +413,7 @@ export default class BaseApplication {
 
 				// The note lock session only detects a synced key change lazily; polling here locks
 				// it (and notifies the UI) as soon as the change arrives.
-				NoteLockSession.instance().isUnlocked();
+				if (isNoteLockEnabled()) NoteLockSession.instance().isUnlocked();
 
 				await loadMasterKeysFromSettings(EncryptionService.instance());
 				const loadedMasterKeyIds = EncryptionService.instance().loadedMasterKeyIds();

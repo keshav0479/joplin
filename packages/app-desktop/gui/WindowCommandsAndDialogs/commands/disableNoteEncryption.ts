@@ -25,17 +25,12 @@ export const runtime = (): CommandRuntime => {
 				return;
 			}
 
-			if (!NoteLockSession.instance().isUnlocked()) {
-				context.dispatch({
-					type: 'DIALOG_OPEN',
-					name: 'noteLockUnlock',
-					props: { successCommand: { name: 'disableNoteEncryption', args: [noteId] } },
-				});
-				return;
-			}
+			// The menu item is disabled while the session is locked, but the command can still be
+			// invoked directly.
+			if (!NoteLockSession.instance().isUnlocked()) throw new Error('Cannot disable encryption while the note lock session is locked');
 
 			await disableNoteLock(noteId);
 		},
-		enabledCondition: 'oneNoteSelected && noteIsLocked && !noteIsReadOnly && !noteIsDeleted && !inTrash && !inConflictFolder',
+		enabledCondition: 'oneNoteSelected && noteIsLocked && noteLockSessionUnlocked && !noteIsReadOnly && !noteIsDeleted && !inTrash && !inConflictFolder',
 	};
 };

@@ -272,7 +272,7 @@ class ConfigScreenComponent extends React.Component<any, any> {
 		}
 
 		if (section.name === 'noteLock') {
-			settingComps.push(<NoteLockSettings key='note_lock_settings'/>);
+			settingComps.push(<NoteLockSettings key='note_lock_settings' selected={selected}/>);
 		}
 
 		if (section.name === 'sync') {

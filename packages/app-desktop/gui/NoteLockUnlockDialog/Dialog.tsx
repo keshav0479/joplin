@@ -47,7 +47,7 @@ export default function(props: Props) {
 			try {
 				await NoteLockSession.instance().unlock(password);
 			} catch (error) {
-				// WebCrypto reports a wrong password as a generic OperationError. Same mapping as NoteLockConfigScreen.
+				// WebCrypto reports a wrong password as a generic OperationError.
 				setErrorMessage(error.name === 'OperationError' ? _('Invalid password') : error.message);
 				setUnlocking(false);
 				return;

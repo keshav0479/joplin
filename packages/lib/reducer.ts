@@ -1512,7 +1512,7 @@ const reducer = produce((draft: Draft<State> = defaultState, action: any) => {
 			draft.hasDisabledEncryptionItems = action.value;
 			break;
 
-		case 'NOTE_LOCK_SESSION_UNLOCKED_SET':
+		case 'SET_NOTE_LOCK_SESSION_UNLOCKED':
 			draft.noteLockSessionUnlocked = action.value;
 			break;
 

@@ -17,6 +17,7 @@ import DecryptionWorker from '@joplin/lib/services/DecryptionWorker';
 import useQueuedAsyncEffect from '@joplin/lib/hooks/useQueuedAsyncEffect';
 import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 
 const logger = Logger.create('useFormNote');
 
@@ -130,9 +131,9 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 
 	// Unlocking makes a locked note's plaintext loadable, locking must drop it - reload to recompute.
 	useEffect(() => {
-		if (prevNoteLockSessionUnlocked === undefined || prevNoteLockSessionUnlocked === noteLockSessionUnlocked) return;
-		if (!formNoteRef.current.is_locked) return;
-		refreshFormNote();
+		if (isNoteLockEnabled() && prevNoteLockSessionUnlocked !== undefined && prevNoteLockSessionUnlocked !== noteLockSessionUnlocked && formNoteRef.current.is_locked) {
+			refreshFormNote();
+		}
 	}, [noteLockSessionUnlocked, prevNoteLockSessionUnlocked, formNoteRef, refreshFormNote]);
 
 
@@ -176,11 +177,9 @@ export default function useFormNote(dependencies: HookDependencies) {
 	formNoteRef.current = formNote;
 
 	const initNoteState: InitNoteStateCallback = useCallback(async (n, isNewNote) => {
-		// Not feature-flag gated: a synced locked note must be handled safely with the flag off. Its
-		// stored body is ciphertext and must never reach the form note - a save would corrupt the note.
 		let lockedBodyUnavailable = false;
 		let noteLockKey = null;
-		if (NoteLockNote.isLocked(n)) {
+		if (isNoteLockEnabled() && NoteLockNote.isLocked(n)) {
 			let decrypted: NoteEntity = null;
 			if (NoteLockSession.instance().isUnlocked()) {
 				try {

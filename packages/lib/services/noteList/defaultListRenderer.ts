@@ -2,6 +2,7 @@ import { _ } from '../../locale';
 import CommandService from '../CommandService';
 import { ItemFlow, ListRenderer, OnClickEvent } from '../plugins/api/noteListType';
 import checkboxPieCss from './checkboxPieCss';
+import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 
 interface CheckboxStats {
 	total: number;
@@ -16,6 +17,7 @@ interface Props {
 		title: string;
 		is_todo: number;
 		todo_completed: number;
+		is_locked: number;
 		checkboxes: CheckboxStats | null;
 	};
 	item: {
@@ -189,6 +191,7 @@ const renderer: ListRenderer = {
 	onRenderNote: async (props: Props) => {
 		return {
 			...props,
+			note: { ...props.note, is_locked: isNoteLockEnabled() ? props.note.is_locked : 0 },
 			checkboxStats: props.note.checkboxes,
 		};
 	},

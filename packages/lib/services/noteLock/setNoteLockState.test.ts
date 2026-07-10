@@ -51,16 +51,16 @@ describe('setNoteLockState', () => {
 		expect(unlocked.extracted_resource_ids).toBe('');
 	});
 
-	it('should be a no-op when the note is already in the requested state', async () => {
+	it('should throw when the note is already in the requested state', async () => {
 		await setUpUnlockedSession();
 		const note = await Note.save({ title: 'note', body: 'plain' });
 
-		await disableNoteLock(note.id);
+		await expect(disableNoteLock(note.id)).rejects.toThrow('not locked');
 		expect((await Note.load(note.id)).body).toBe('plain');
 
 		await enableNoteLock(note.id);
 		const lockedBody = (await Note.load(note.id)).body;
-		await enableNoteLock(note.id);
+		await expect(enableNoteLock(note.id)).rejects.toThrow('already locked');
 		expect((await Note.load(note.id)).body).toBe(lockedBody);
 	});
 
