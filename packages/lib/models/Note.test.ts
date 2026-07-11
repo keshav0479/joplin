@@ -306,6 +306,10 @@ describe('models/Note', () => {
 			id: note.id,
 			body: 'must not be stored',
 		}, { useNoteLock: true })).rejects.toThrow('Gated note lock save is missing lock state');
+		await expect(Note.save({
+			id: note.id,
+			is_locked: 1,
+		}, { useNoteLock: true })).rejects.toThrow('Gated note lock save is missing body');
 		expect((await Note.load(note.id, { useNoteLock: true })).body).toBe(plainTextBody);
 
 		await Note.save({
@@ -318,7 +322,7 @@ describe('models/Note', () => {
 			...await Note.load(note.id, { useNoteLock: true }),
 			body: 'unlocked',
 			is_locked: 0,
-		}, { useNoteLock: true, allowNoteLockTransition: true });
+		}, { useNoteLock: true });
 		const unlockedNote = await Note.load(note.id);
 		expect(unlockedNote.body).toBe('unlocked');
 		expect(unlockedNote.extracted_resource_ids).toBe('');
@@ -354,17 +358,6 @@ describe('models/Note', () => {
 		const bodyBeforeStaleAttempt = (await Note.load(note.id)).body;
 		await expect(Note.save({ ...await Note.load(note.id), body: 'stale' }, { useNoteLock: true, noteLockKey: capturedKey })).rejects.toThrow('Note lock key changed during operation');
 		expect((await Note.load(note.id)).body).toBe(bodyBeforeStaleAttempt);
-	});
-
-	it('should not let a save flip the lock state outside the note lock state path', async () => {
-		await NoteLockKey.instance().create('123456');
-		await NoteLockSession.instance().unlock('123456');
-		const locked = await Note.save({ body: 'secret', is_locked: 1 }, { useNoteLock: true });
-		const plain = await Note.save({ body: 'plain' });
-
-		await expect(Note.save({ ...await Note.load(locked.id, { useNoteLock: true }), is_locked: 0 }, { useNoteLock: true })).rejects.toThrow('outside the note lock state path');
-		await expect(Note.save({ ...await Note.load(plain.id), is_locked: 1 }, { useNoteLock: true })).rejects.toThrow('outside the note lock state path');
-		expect((await Note.load(plain.id)).is_locked).toBe(0);
 	});
 
 	it('should fail closed when note lock encryption cannot decrypt or encrypt', async () => {
@@ -413,7 +406,7 @@ describe('models/Note', () => {
 		await Note.save({
 			...await Note.load(note.id),
 			is_locked: 1,
-		}, { useNoteLock: true, allowNoteLockTransition: true });
+		}, { useNoteLock: true });
 
 		expect(await Revision.countRevisions(Note.modelType(), note.id)).toBe(1);
 		expect(await Revision.load(encryptedRevision.id)).toBeTruthy();

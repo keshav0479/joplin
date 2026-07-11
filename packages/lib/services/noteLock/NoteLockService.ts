@@ -20,12 +20,12 @@ export default class NoteLockService {
 		return this.instance_;
 	}
 
-	// Decrypt reuses the key captured at scope start, since at-rest ciphertext doesn't change if the key rotates.
-	// Encrypt is guarded by the session instead, so a lock alone won't interrupt it but a real rotation will.
-	// Callers must await every scoped op: one that's started but not awaited still holds its captured key copy.
-	public static async withDecryptedKey<T>(callback: (service: ScopedNoteLockService)=> Promise<T>) {
+	// A passed key keeps working after a session lock, but encrypting with a rotated key still
+	// aborts via the session check. Callers must await every scoped op: one that's started but
+	// not awaited still holds its captured key copy.
+	public static async withDecryptedKey<T>(callback: (service: ScopedNoteLockService)=> Promise<T>, key: DecryptedNoteLockKey = null) {
 		const session = NoteLockSession.instance();
-		const key = session.decryptedKey();
+		if (!key) key = session.decryptedKey();
 		const scoped = new NoteLockService(EncryptionService.instance(), () => key, keyId => session.assertCanEncryptWith(keyId));
 		const scopedView: ScopedNoteLockService = {
 			decryptString: cipherText => scoped.decryptString(cipherText),
@@ -35,18 +35,6 @@ export default class NoteLockService {
 		};
 		try {
 			return await callback(scopedView);
-		} finally {
-			scoped.revoke_();
-		}
-	}
-
-	// Encrypts with a key captured earlier (e.g. when the note was decrypted for editing), so a
-	// session lock alone doesn't interrupt it. A real key rotation still aborts via the session check.
-	public static async encryptStringWithKey(plainText: string, key: DecryptedNoteLockKey) {
-		const session = NoteLockSession.instance();
-		const scoped = new NoteLockService(EncryptionService.instance(), () => key, keyId => session.assertCanEncryptWith(keyId));
-		try {
-			return await scoped.encryptString(plainText);
 		} finally {
 			scoped.revoke_();
 		}

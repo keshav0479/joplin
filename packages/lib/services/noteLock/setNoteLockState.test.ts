@@ -1,7 +1,6 @@
 import Setting from '../../models/Setting';
 import Note from '../../models/Note';
 import Folder from '../../models/Folder';
-import ItemChange from '../../models/ItemChange';
 import { encryptionService, setupDatabaseAndSynchronizer, switchClient, afterAllCleanUp } from '../../testing/test-utils';
 import EncryptionService from '../e2ee/EncryptionService';
 import NoteLockKey from './NoteLockKey';
@@ -96,21 +95,4 @@ describe('setNoteLockState', () => {
 		await expect(enableNoteLock(note.id)).rejects.toThrow();
 	});
 
-	it('should reject a non-gated body write on a locked note, except from sync', async () => {
-		await setUpUnlockedSession();
-		const note = await Note.save({ title: 'note', body: 'secret' });
-		await enableNoteLock(note.id);
-		const lockedBody = (await Note.load(note.id)).body;
-
-		await expect(Note.save({ id: note.id, body: 'stale autosave plaintext' })).rejects.toThrow();
-		expect((await Note.load(note.id)).body).toBe(lockedBody);
-
-		// Title-only and unchanged-body saves stay allowed for locked notes.
-		await Note.save({ id: note.id, title: 'renamed' });
-		expect((await Note.load(note.id)).title).toBe('renamed');
-
-		// Sync legitimately writes ciphertext bodies.
-		await Note.save({ id: note.id, body: 'ciphertext from sync' }, { changeSource: ItemChange.SOURCE_SYNC });
-		expect((await Note.load(note.id)).body).toBe('ciphertext from sync');
-	});
 });

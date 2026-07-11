@@ -48,8 +48,8 @@ describe('useFormNote', () => {
 			});
 			expect(lockedRender.result.current.formNote).toMatchObject({
 				is_locked: 1,
-				lockedBodyUnavailable: true,
 				body: '',
+				noteLockKey: null,
 			});
 			lockedRender.unmount();
 
@@ -62,25 +62,10 @@ describe('useFormNote', () => {
 			});
 			expect(unlockedRender.result.current.formNote).toMatchObject({
 				is_locked: 1,
-				lockedBodyUnavailable: false,
 				body: 'secret content',
 				noteLockKey: { id: 'key-id', plainText: 'key' },
 			});
 			unlockedRender.unmount();
-
-			// A decryption failure while unlocked must also keep the body out of the form note.
-			decryptBodyMock.mockRejectedValue(new Error('key mismatch'));
-			const failedRender = renderHook(props => useFormNote(props), {
-				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true },
-			});
-			await waitFor(() => {
-				expect(failedRender.result.current.formNote.id).toBe(testNote.id);
-			});
-			expect(failedRender.result.current.formNote).toMatchObject({
-				lockedBodyUnavailable: true,
-				body: '',
-			});
-			failedRender.unmount();
 
 			Setting.setValue('featureFlag.noteLock', false);
 			isUnlockedMock.mockReturnValue(false);
@@ -91,7 +76,6 @@ describe('useFormNote', () => {
 				expect(flagOffRender.result.current.formNote.id).toBe(testNote.id);
 			});
 			expect(flagOffRender.result.current.formNote).toMatchObject({
-				lockedBodyUnavailable: false,
 				body: 'ciphertext',
 			});
 			flagOffRender.unmount();

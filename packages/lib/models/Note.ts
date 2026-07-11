@@ -849,23 +849,11 @@ export default class Note extends BaseItem {
 		// in the item_changes table
 		const oldNote = !isNew && o.id ? await Note.load(o.id) : null;
 		let plainTextBodyToReturn: string = null;
-		if (isNoteLockEnabled()) {
-			// A locked note's stored body is ciphertext, so a non-gated body write would overwrite it with
-			// stale plaintext. Sync and decryption legitimately write ciphertext bodies, so they are exempt.
-			if (!options?.useNoteLock && NoteLockNote.isLocked(oldNote) && 'body' in o && o.body !== oldNote.body && changeSource !== ItemChange.SOURCE_SYNC && changeSource !== ItemChange.SOURCE_DECRYPTION) {
-				throw new Error(`Cannot save the body of a locked note outside the note lock save path: ${o.id}`);
-			}
-			// Only setNoteLockState may flip the lock state; a save carrying a stale snapshot fails
-			// instead of flipping it back.
-			if (oldNote && 'is_locked' in o && !!o.is_locked !== !!oldNote.is_locked && !options?.allowNoteLockTransition && changeSource !== ItemChange.SOURCE_SYNC && changeSource !== ItemChange.SOURCE_DECRYPTION) {
-				throw new Error(`Cannot change the lock state of a note outside the note lock state path: ${o.id}`);
-			}
-			if (options?.useNoteLock) {
-				// Callers use the returned note to update UI state, so it must carry the plaintext
-				// body even though the encrypted one is what gets persisted.
-				if (NoteLockNote.isLocked(o) && 'body' in o) plainTextBodyToReturn = o.body;
-				await NoteLockNote.prepareForSave(o, this.linkedItemIds, this.serializeExtractedResourceIds, isNew, options.noteLockKey);
-			}
+		if (isNoteLockEnabled() && !!options?.useNoteLock) {
+			// Callers use the returned note to update UI state, so it must carry the plaintext
+			// body even though the encrypted one is what gets persisted.
+			if (NoteLockNote.isLocked(o) && 'body' in o) plainTextBodyToReturn = o.body;
+			await NoteLockNote.prepareForSave(o, this.linkedItemIds, this.serializeExtractedResourceIds, isNew, options.noteLockKey);
 		}
 
 		syncDebugLog.info('Save Note: P:', oldNote);
@@ -875,9 +863,7 @@ export default class Note extends BaseItem {
 		// has just been downloaded from the sync target and save is invoked when the note has not yet been decrypted
 		if (oldNote && !oldNote.encryption_applied) {
 			const changedSinceCollection = this.revisionService().changedSinceCollection(o.id);
-			// A partial save (e.g. a metadata-only update) may omit is_locked, so fall back to the
-			// stored note - otherwise the revision snapshot would capture the ciphertext body.
-			if (isNoteLockEnabled() && NoteLockNote.isLocked('is_locked' in o ? o : oldNote)) {
+			if (isNoteLockEnabled() && NoteLockNote.isLocked(o)) {
 				beforeNoteJson = null;
 			} else if (changedSinceCollection) {
 				beforeNoteJson = await ItemChange.oldNoteContent(o.id);

@@ -141,7 +141,13 @@ function NoteEditorContent(props: NoteEditorProps) {
 			// Enabling requires an unlocked session, so capture the key the same way a decrypt
 			// does - a pending save can then still encrypt if the session locks before it runs.
 			const noteLockKey = event.isLocked && NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
-			setFormNote(prev => prev.id === event.noteId ? { ...prev, is_locked: event.isLocked ? 1 : 0, noteLockKey } : prev);
+			setFormNote(prev => {
+				if (prev.id !== event.noteId) return prev;
+				// A locked form without a key holds the blank placeholder, not the note's body -
+				// don't make it editable; the ItemChange refresh reloads it instead.
+				if (prev.is_locked && !prev.noteLockKey) return prev;
+				return { ...prev, is_locked: event.isLocked ? 1 : 0, noteLockKey };
+			});
 		};
 		eventManager.on(EventName.NoteLockNoteStateChange, onLockStateChange);
 		return () => {
@@ -691,10 +697,10 @@ function NoteEditorContent(props: NoteEditorProps) {
 		return renderNoNotes(styles.root);
 	}
 
-	// A locked note only mounts once its plaintext was loaded through the gated path. A note
-	// with pending changes stays mounted on lock, so the unsaved plaintext is not thrown away
-	// before its re-queued save runs on the next unlock.
-	if (isNoteLockEnabled() && formNote.is_locked && (formNote.lockedBodyUnavailable || (!props.noteLockSessionUnlocked && !formNote.hasChanged))) {
+	// The key is captured together with the plaintext, so a missing key means the body is still
+	// the blank placeholder and the panel must stay until the decrypted refresh lands. A note with
+	// pending changes stays mounted on lock, so its unsaved plaintext is not thrown away.
+	if (isNoteLockEnabled() && formNote.is_locked && (!props.noteLockSessionUnlocked || !formNote.noteLockKey) && !formNote.hasChanged) {
 		return (
 			<div style={styles.root} ref={containerRef}>
 				<NoteLockPanel

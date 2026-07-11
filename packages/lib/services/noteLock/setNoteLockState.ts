@@ -22,7 +22,7 @@ export const enableNoteLock = async (noteId: string) => {
 	const note = await Note.load(noteId);
 	checkCanChangeLockState(note, noteId);
 	if (note.is_locked) throw new Error(`Note is already locked: ${noteId}`);
-	await Note.save({ ...note, is_locked: 1 }, { useNoteLock: true, allowNoteLockTransition: true });
+	await Note.save({ ...note, is_locked: 1 }, { useNoteLock: true });
 	eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked: true });
 };
 
@@ -30,6 +30,6 @@ export const disableNoteLock = async (noteId: string) => {
 	const note = await Note.load(noteId, { useNoteLock: true });
 	checkCanChangeLockState(note, noteId);
 	if (!note.is_locked) throw new Error(`Note is not locked: ${noteId}`);
-	await Note.save({ ...note, is_locked: 0 }, { useNoteLock: true, allowNoteLockTransition: true });
+	await Note.save({ ...note, is_locked: 0 }, { useNoteLock: true });
 	eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked: false });
 };

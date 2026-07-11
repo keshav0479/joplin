@@ -172,9 +172,6 @@ export interface FormNote {
 	user_updated_time: number;
 	encryption_applied: number;
 	is_locked: number;
-	// The plaintext body could not be loaded (session locked or decryption failed). The editor
-	// must show the unlock panel instead of an editable body whose save would encrypt a placeholder.
-	lockedBodyUnavailable: boolean;
 	// The key captured when the locked note was decrypted; pending saves encrypt with it so they
 	// can complete even if the session locks before they run.
 	noteLockKey: DecryptedNoteLockKey|null;
@@ -231,7 +228,6 @@ export function defaultFormNote(): FormNote {
 		user_updated_time: 0,
 		encryption_applied: 0,
 		is_locked: 0,
-		lockedBodyUnavailable: false,
 		noteLockKey: null,
 	};
 }

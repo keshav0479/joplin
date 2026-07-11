@@ -70,7 +70,7 @@ function resourceInfosChanged(a: ResourceInfos, b: ResourceInfos): boolean {
 	return false;
 }
 
-type InitNoteStateCallback = (note: NoteEntity, isNew: boolean)=> Promise<FormNote>;
+type InitNoteStateCallback = (note: NoteEntity, isNew: boolean, bodyDecrypted?: boolean)=> Promise<FormNote>;
 const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, builtInEditorVisible: boolean, noteLockSessionUnlocked: boolean) => {
 	// Increasing the value of this counter cancels any ongoing note refreshes and starts
 	// a new refresh.
@@ -88,7 +88,9 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 		logger.info('Sync has finished and note has never been changed - reloading it');
 
 		const loadNote = async () => {
-			const n = await Note.load(noteId);
+			// Gated load while unlocked decrypts a locked note's body; initNoteState blanks it otherwise.
+			const useNoteLock = NoteLockSession.instance().isUnlocked();
+			const n = await Note.load(noteId, { useNoteLock });
 			if (event.cancelled || formNoteRef.current.hasChanged) return;
 
 			// Normally should not happened because if the note has been deleted via sync
@@ -99,7 +101,7 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 				return;
 			}
 
-			await initNoteState(n, false);
+			await initNoteState(n, false, useNoteLock);
 			if (event.cancelled) return;
 			setFormNoteRefreshScheduled(oldValue => {
 				// If a new refresh was scheduled between initNoteState
@@ -176,28 +178,16 @@ export default function useFormNote(dependencies: HookDependencies) {
 	const formNoteRef = useRef(formNote);
 	formNoteRef.current = formNote;
 
-	const initNoteState: InitNoteStateCallback = useCallback(async (n, isNewNote) => {
-		let lockedBodyUnavailable = false;
+	const initNoteState: InitNoteStateCallback = useCallback(async (n, isNewNote, bodyDecrypted = false) => {
 		let noteLockKey = null;
 		if (isNoteLockEnabled() && NoteLockNote.isLocked(n)) {
-			let decrypted: NoteEntity = null;
-			if (NoteLockSession.instance().isUnlocked()) {
-				try {
-					decrypted = await NoteLockNote.decryptBody(n);
-					// Capture the key with the plaintext so pending saves can re-encrypt even after
-					// the session locks. Throws if the session locked while decryption was in flight.
-					noteLockKey = NoteLockSession.instance().decryptedKey();
-				} catch (error) {
-					logger.warn('Could not decrypt locked note body:', n.id, error);
-					decrypted = null;
-				}
-			}
-			if (decrypted) {
-				n = decrypted;
+			if (bodyDecrypted && NoteLockSession.instance().isUnlocked()) {
+				// Capture the key with the plaintext so pending saves can re-encrypt even after
+				// the session locks.
+				noteLockKey = NoteLockSession.instance().decryptedKey();
 			} else {
+				// Ciphertext (or plaintext whose session locked again) must not reach the editor.
 				n = { ...n, body: '' };
-				lockedBodyUnavailable = true;
-				noteLockKey = null;
 			}
 		}
 
@@ -225,7 +215,6 @@ export default function useFormNote(dependencies: HookDependencies) {
 			user_updated_time: n.user_updated_time,
 			encryption_applied: n.encryption_applied,
 			is_locked: n.is_locked,
-			lockedBodyUnavailable,
 			noteLockKey,
 		};
 
@@ -283,14 +272,16 @@ export default function useFormNote(dependencies: HookDependencies) {
 		}
 
 		async function loadNote() {
-			const n = await Note.load(noteId);
+			// See the gated load comment in useRefreshFormNoteOnChange.
+			const useNoteLock = NoteLockSession.instance().isUnlocked();
+			const n = await Note.load(noteId, { useNoteLock });
 			if (cancelled) return;
 			if (!n) throw new Error(`Cannot find note with ID: ${noteId}`);
 			logger.debug('Loaded note:', n);
 
 			await onBeforeLoad({ formNote });
 
-			const newFormNote = await initNoteState(n, true);
+			const newFormNote = await initNoteState(n, true, useNoteLock);
 
 			setIsNewNote(isProvisional);
 

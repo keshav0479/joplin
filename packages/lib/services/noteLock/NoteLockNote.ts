@@ -29,15 +29,16 @@ export default class NoteLockNote {
 
 	public static async prepareForSave(note: NoteEntity, linkedItemIds: (body: string)=> string[], serializeResourceIds: (resourceIds: string[])=> string, isNew: boolean, key: DecryptedNoteLockKey = null) {
 		if (!note) throw new Error('Gated note lock save is missing note');
-		// Gated saves for existing notes should be based on a loaded note, so missing lock state is a logic error.
+		// Gated saves do not support partial note objects, so they must be based on a loaded note.
 		if (note.is_locked === undefined && !isNew) throw new Error('Gated note lock save is missing lock state');
+		if (!('body' in note)) throw new Error('Gated note lock save is missing body');
 		const isLocked = this.isLocked(note);
 		if (!isLocked) note.extracted_resource_ids = '';
 
 		const plainTextBody = note.body ?? '';
 		if (isLocked) {
 			note.extracted_resource_ids = serializeResourceIds(linkedItemIds(plainTextBody));
-			note.body = key ? await NoteLockService.encryptStringWithKey(plainTextBody, key) : await NoteLockService.instance().encryptString(plainTextBody);
+			note.body = await NoteLockService.withDecryptedKey(scoped => scoped.encryptString(plainTextBody), key);
 		}
 	}
 }
