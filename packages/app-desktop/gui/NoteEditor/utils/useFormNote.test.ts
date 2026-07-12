@@ -30,7 +30,7 @@ describe('useFormNote', () => {
 
 	// The session and decryption internals are covered by the lib tests; here they are mocked to
 	// test only the hook's gating: ciphertext must never reach the form note.
-	it('should never expose a locked note body: blank it while the session is locked, decrypt it while unlocked', async () => {
+	it('should not produce a form note for a locked note while the session is locked, and decrypt it once unlocked', async () => {
 		Setting.setValue('featureFlag.noteLock', true);
 		// A direct save of a new note with is_locked keeps the raw body, standing in for ciphertext.
 		const testNote = await Note.save({ title: 'Locked note', body: 'ciphertext', is_locked: 1 });
@@ -38,34 +38,33 @@ describe('useFormNote', () => {
 		const isUnlockedMock = jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValue(false);
 		const decryptedKeyMock = jest.spyOn(NoteLockSession.instance(), 'decryptedKey').mockReturnValue({ id: 'key-id', plainText: 'key' });
 		const decryptBodyMock = jest.spyOn(NoteLockNote, 'decryptBody').mockImplementation(async note => ({ ...note, body: 'secret content' }));
+		const onBeforeLoad = jest.fn();
 
 		try {
 			const lockedRender = renderHook(props => useFormNote(props), {
-				initialProps: { ...defaultFormNoteProps, noteId: testNote.id },
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, onBeforeLoad },
 			});
-			await waitFor(() => {
-				expect(lockedRender.result.current.formNote.id).toBe(testNote.id);
-			});
+			// The blocked load produces no state change to wait for; onBeforeLoad is its last
+			// await, so once it has run a single flush completes the branch.
+			await waitFor(() => expect(onBeforeLoad).toHaveBeenCalled());
+			await act(async () => {});
 			expect(lockedRender.result.current.formNote).toMatchObject({
-				is_locked: 1,
+				id: '',
 				body: '',
 				noteLockKey: null,
 			});
-			lockedRender.unmount();
 
 			isUnlockedMock.mockReturnValue(true);
-			const unlockedRender = renderHook(props => useFormNote(props), {
-				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true },
-			});
+			lockedRender.rerender({ ...defaultFormNoteProps, noteId: testNote.id, onBeforeLoad, noteLockSessionUnlocked: true });
 			await waitFor(() => {
-				expect(unlockedRender.result.current.formNote.id).toBe(testNote.id);
+				expect(lockedRender.result.current.formNote).toMatchObject({
+					id: testNote.id,
+					is_locked: 1,
+					body: 'secret content',
+					noteLockKey: { id: 'key-id', plainText: 'key' },
+				});
 			});
-			expect(unlockedRender.result.current.formNote).toMatchObject({
-				is_locked: 1,
-				body: 'secret content',
-				noteLockKey: { id: 'key-id', plainText: 'key' },
-			});
-			unlockedRender.unmount();
+			lockedRender.unmount();
 
 			Setting.setValue('featureFlag.noteLock', false);
 			isUnlockedMock.mockReturnValue(false);

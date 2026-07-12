@@ -143,9 +143,6 @@ function NoteEditorContent(props: NoteEditorProps) {
 			const noteLockKey = event.isLocked && NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
 			setFormNote(prev => {
 				if (prev.id !== event.noteId) return prev;
-				// A locked form without a key holds the blank placeholder, not the note's body -
-				// don't make it editable; the ItemChange refresh reloads it instead.
-				if (prev.is_locked && !prev.noteLockKey) return prev;
 				return { ...prev, is_locked: event.isLocked ? 1 : 0, noteLockKey };
 			});
 		};
@@ -693,23 +690,31 @@ function NoteEditorContent(props: NoteEditorProps) {
 		/>;
 	};
 
-	if (formNote.encryption_applied || !formNote.id || !effectiveNoteId) {
-		return renderNoNotes(styles.root);
+	// A locked note has no form note while the session is locked (see loadNoteForForm), so the
+	// panel is driven by the note metadata. A loaded form note stays mounted on lock only if it
+	// has unsaved changes, so they are not thrown away.
+	const lockedNoteMetadata = isNoteLockEnabled() && effectiveNoteId ? props.notes.find(n => n.id === effectiveNoteId) : null;
+	if (lockedNoteMetadata?.is_locked) {
+		const formNoteLoaded = formNote.id === effectiveNoteId;
+		const showLockPanel = formNoteLoaded
+			? !props.noteLockSessionUnlocked && !formNote.hasChanged
+			// A blocked load cleared the form - keep the panel up until the decrypted note arrives.
+			: !props.noteLockSessionUnlocked || !formNote.id;
+		if (showLockPanel) {
+			return (
+				<div style={styles.root} ref={containerRef}>
+					<NoteLockPanel
+						noteTitle={lockedNoteMetadata.title}
+						hasNoteLockKey={props.hasNoteLockKey}
+						dispatch={props.dispatch}
+					/>
+				</div>
+			);
+		}
 	}
 
-	// The key is captured together with the plaintext, so a missing key means the body is still
-	// the blank placeholder and the panel must stay until the decrypted refresh lands. A note with
-	// pending changes stays mounted on lock, so its unsaved plaintext is not thrown away.
-	if (isNoteLockEnabled() && formNote.is_locked && (!props.noteLockSessionUnlocked || !formNote.noteLockKey) && !formNote.hasChanged) {
-		return (
-			<div style={styles.root} ref={containerRef}>
-				<NoteLockPanel
-					noteTitle={formNote.title}
-					hasNoteLockKey={props.hasNoteLockKey}
-					dispatch={props.dispatch}
-				/>
-			</div>
-		);
+	if (formNote.encryption_applied || !formNote.id || !effectiveNoteId) {
+		return renderNoNotes(styles.root);
 	}
 
 	const theme = themeStyle(props.themeId);
