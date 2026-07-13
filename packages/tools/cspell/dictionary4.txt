@@ -335,3 +335,6 @@ logits
 tradeoff
 lockedicon
 ungated
+Reconnectable
+doleocent1
+Socialboom
