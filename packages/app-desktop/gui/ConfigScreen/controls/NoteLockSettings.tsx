@@ -5,6 +5,7 @@ import { _ } from '@joplin/lib/locale';
 import NoteLockKey from '@joplin/lib/services/noteLock/NoteLockKey';
 import CommandService from '@joplin/lib/services/CommandService';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import shim from '@joplin/lib/shim';
 import { SyncInfo } from '@joplin/lib/services/synchronizer/syncInfoUtils';
 import LabelledPasswordInput from '../../PasswordInput/LabelledPasswordInput';
 import Button, { ButtonLevel } from '../../Button/Button';
@@ -63,6 +64,7 @@ const NoteLockSettings: React.FC<Props> = props => {
 	const canUpgrade = !!upgradePassword && !saving;
 
 	const forgotPasswordDescription = _('Only do this if you\'ve forgotten your current password. A new password will be created, and any notes locked with the old one will become permanently unreadable.');
+	const forgotPasswordWarning = `${_('Warning:')} ${forgotPasswordDescription}`;
 
 	const onCurrentPasswordChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
 		setCurrentPassword(event.target.value);
@@ -82,6 +84,7 @@ const NoteLockSettings: React.FC<Props> = props => {
 
 	const submit = useCallback(async () => {
 		if (!canSave) return;
+		if (mode === ActionMode.Reset && !await shim.showConfirmationDialog(forgotPasswordWarning)) return;
 
 		setSaving(true);
 		setError('');
@@ -102,7 +105,7 @@ const NoteLockSettings: React.FC<Props> = props => {
 		} finally {
 			setSaving(false);
 		}
-	}, [canSave, onModeChange, currentPassword, mode, password, setError]);
+	}, [canSave, onModeChange, currentPassword, mode, password, setError, forgotPasswordWarning]);
 
 	const submitUpgrade = useCallback(async () => {
 		if (!canUpgrade) return;
