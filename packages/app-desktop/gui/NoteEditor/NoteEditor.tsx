@@ -138,19 +138,19 @@ function NoteEditorContent(props: NoteEditorProps) {
 		// Pending scheduled saves read the lock state from the form note, so it must follow an
 		// enable/disable triggered outside the editor (note list menu, another window) immediately.
 		const onLockStateChange = (event: NoteLockNoteStateChangeEvent) => {
+			if (formNoteRef.current.id !== event.noteId) return;
 			// Enabling requires an unlocked session, so capture the key the same way a decrypt
 			// does - a pending save can then still encrypt if the session locks before it runs.
 			const noteLockKey = event.isLocked && NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
-			setFormNote(prev => {
-				if (prev.id !== event.noteId) return prev;
-				return { ...prev, is_locked: event.isLocked ? 1 : 0, noteLockKey };
-			});
+			const newFormNote = { ...formNoteRef.current, is_locked: event.isLocked ? 1 : 0, noteLockKey };
+			setFormNote(newFormNote);
+			void scheduleSaveNote(newFormNote);
 		};
 		eventManager.on(EventName.NoteLockNoteStateChange, onLockStateChange);
 		return () => {
 			eventManager.off(EventName.NoteLockNoteStateChange, onLockStateChange);
 		};
-	}, [setFormNote]);
+	}, [setFormNote, scheduleSaveNote]);
 
 	const formNoteFolder = useFolder({ folderId: formNote.parent_id });
 

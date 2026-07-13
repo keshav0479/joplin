@@ -863,7 +863,10 @@ export default class Note extends BaseItem {
 		// has just been downloaded from the sync target and save is invoked when the note has not yet been decrypted
 		if (oldNote && !oldNote.encryption_applied) {
 			const changedSinceCollection = this.revisionService().changedSinceCollection(o.id);
-			if (isNoteLockEnabled() && NoteLockNote.isLocked(o)) {
+			// If the note is transitioning from is_locked 0 > 1, clear the beforeNoteJson to avoid creating
+			// an unencrypted revision. After the transition has taken place, it is fine to populate it,
+			// because the oldNote is an ungated full load which will include the data encrypted when locked
+			if (isNoteLockEnabled() && NoteLockNote.isLocked(o) && !NoteLockNote.isLocked(oldNote)) {
 				beforeNoteJson = null;
 			} else if (changedSinceCollection) {
 				beforeNoteJson = await ItemChange.oldNoteContent(o.id);

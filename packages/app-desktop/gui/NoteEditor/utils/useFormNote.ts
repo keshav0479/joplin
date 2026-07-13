@@ -73,10 +73,14 @@ function resourceInfosChanged(a: ResourceInfos, b: ResourceInfos): boolean {
 // While the session is locked, a locked note produces no form note at all - the unlock panel
 // takes the editor's place. So no placeholder body exists that a save could write over the note.
 const loadNoteForForm = async (noteId: string): Promise<{ note: NoteEntity|null; blocked: boolean }> => {
-	const note = await Note.load(noteId);
-	if (!note || !isNoteLockEnabled() || !NoteLockNote.isLocked(note)) return { note, blocked: false };
-	if (!NoteLockSession.instance().isUnlocked()) return { note: null, blocked: true };
-	return { note: await Note.load(noteId, { useNoteLock: true }), blocked: false };
+	if (isNoteLockEnabled()) {
+		const lockState = await Note.load(noteId, { fields: ['is_locked'] });
+		if (lockState && NoteLockNote.isLocked(lockState)) {
+			if (!NoteLockSession.instance().isUnlocked()) return { note: null, blocked: true };
+			return { note: await Note.load(noteId, { useNoteLock: true }), blocked: false };
+		}
+	}
+	return { note: await Note.load(noteId), blocked: false };
 };
 
 type InitNoteStateCallback = (note: NoteEntity, isNew: boolean)=> Promise<FormNote>;

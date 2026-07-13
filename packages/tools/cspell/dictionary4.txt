@@ -334,3 +334,4 @@ heif
 logits
 tradeoff
 lockedicon
+ungated
