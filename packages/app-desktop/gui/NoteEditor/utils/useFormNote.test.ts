@@ -86,6 +86,32 @@ describe('useFormNote', () => {
 		}
 	});
 
+	it('should report a decryption failure instead of throwing, without producing a form note', async () => {
+		Setting.setValue('featureFlag.noteLock', true);
+		const testNote = await Note.save({ title: 'Locked note', body: 'ciphertext', is_locked: 1 });
+
+		const isUnlockedMock = jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValue(true);
+		const decryptBodyMock = jest.spyOn(NoteLockNote, 'decryptBody').mockRejectedValue(new Error('OperationError'));
+
+		try {
+			const render = renderHook(props => useFormNote(props), {
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true },
+			});
+			await waitFor(() => {
+				expect(render.result.current.decryptFailed).toBe(true);
+			});
+			expect(render.result.current.formNote).toMatchObject({
+				id: '',
+				body: '',
+			});
+			render.unmount();
+		} finally {
+			isUnlockedMock.mockRestore();
+			decryptBodyMock.mockRestore();
+			Setting.setValue('featureFlag.noteLock', false);
+		}
+	});
+
 	it('should update note when decryption completes', async () => {
 		const testNote = await Note.save({ title: 'Test Note!' });
 

@@ -72,19 +72,26 @@ function resourceInfosChanged(a: ResourceInfos, b: ResourceInfos): boolean {
 
 // While the session is locked, a locked note produces no form note at all - the unlock panel
 // takes the editor's place. So no placeholder body exists that a save could write over the note.
-const loadNoteForForm = async (noteId: string): Promise<{ note: NoteEntity|null; blocked: boolean }> => {
+const loadNoteForForm = async (noteId: string): Promise<{ note: NoteEntity|null; blocked: boolean; decryptFailed: boolean }> => {
 	if (isNoteLockEnabled()) {
 		const lockState = await Note.load(noteId, { fields: ['is_locked'] });
 		if (lockState && NoteLockNote.isLocked(lockState)) {
-			if (!NoteLockSession.instance().isUnlocked()) return { note: null, blocked: true };
-			return { note: await Note.load(noteId, { useNoteLock: true }), blocked: false };
+			if (!NoteLockSession.instance().isUnlocked()) return { note: null, blocked: true, decryptFailed: false };
+			try {
+				return { note: await Note.load(noteId, { useNoteLock: true }), blocked: false, decryptFailed: false };
+			} catch (error) {
+				// Happens when the note was encrypted with a different key, e.g. before a password
+				// reset. Fail closed and let the editor show the cannot-decrypt panel.
+				logger.warn('Could not decrypt locked note:', noteId, error);
+				return { note: null, blocked: false, decryptFailed: true };
+			}
 		}
 	}
-	return { note: await Note.load(noteId), blocked: false };
+	return { note: await Note.load(noteId), blocked: false, decryptFailed: false };
 };
 
 type InitNoteStateCallback = (note: NoteEntity, isNew: boolean)=> Promise<FormNote>;
-const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, clearFormNote: ()=> void, builtInEditorVisible: boolean, noteLockSessionUnlocked: boolean) => {
+const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, clearFormNote: ()=> void, builtInEditorVisible: boolean, noteLockSessionUnlocked: boolean, setDecryptFailed: (value: boolean)=> void) => {
 	// Increasing the value of this counter cancels any ongoing note refreshes and starts
 	// a new refresh.
 	const [formNoteRefreshScheduled, setFormNoteRefreshScheduled] = useState<number>(0);
@@ -101,12 +108,13 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 		logger.info('Sync has finished and note has never been changed - reloading it');
 
 		const loadNote = async () => {
-			const { note: n, blocked } = await loadNoteForForm(noteId);
+			const { note: n, blocked, decryptFailed } = await loadNoteForForm(noteId);
 			if (event.cancelled || formNoteRef.current.hasChanged) return;
 
-			if (blocked) {
-				// The session locked with this note open - drop its decrypted content and let
-				// the unlock panel take over.
+			setDecryptFailed(decryptFailed);
+			if (blocked || decryptFailed) {
+				// The session locked with this note open (or its content stopped decrypting) - drop
+				// the decrypted content and let the corresponding panel take over.
 				if (formNoteRef.current.id) clearFormNote();
 			} else {
 				// Normally should not happened because if the note has been deleted via sync
@@ -132,7 +140,7 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 		};
 
 		await loadNote();
-	}, [formNoteRefreshScheduled, noteId, editorId, initNoteState, clearFormNote]);
+	}, [formNoteRefreshScheduled, noteId, editorId, initNoteState, clearFormNote, setDecryptFailed]);
 
 	const refreshFormNote = useCallback(() => {
 		// Increase the counter to cancel any ongoing refresh attempts
@@ -190,6 +198,9 @@ export default function useFormNote(dependencies: HookDependencies) {
 
 	const [formNote, setFormNote] = useState<FormNote>(defaultFormNote());
 	const [isNewNote, setIsNewNote] = useState(false);
+	// Keyed by note id so a failure can never carry over to another note the user switches to.
+	const [decryptFailedId, setDecryptFailedId] = useState<string|null>(null);
+	const setDecryptFailed = useCallback((value: boolean) => setDecryptFailedId(value ? noteId : null), [noteId]);
 	const previousNoteId = usePrevious(formNote.id);
 	const [resourceInfos, setResourceInfos] = useState<ResourceInfos>({});
 
@@ -264,7 +275,7 @@ export default function useFormNote(dependencies: HookDependencies) {
 		setFormNote(formNoteRef.current);
 	}, []);
 
-	useRefreshFormNoteOnChange(formNoteRef, editorId, noteId, initNoteState, clearFormNote, builtInEditorVisible, noteLockSessionUnlocked);
+	useRefreshFormNoteOnChange(formNoteRef, editorId, noteId, initNoteState, clearFormNote, builtInEditorVisible, noteLockSessionUnlocked, setDecryptFailed);
 
 	useEffect(() => {
 		if (!noteId) {
@@ -293,14 +304,15 @@ export default function useFormNote(dependencies: HookDependencies) {
 		}
 
 		async function loadNote() {
-			const { note: n, blocked } = await loadNoteForForm(noteId);
+			const { note: n, blocked, decryptFailed } = await loadNoteForForm(noteId);
 			if (cancelled) return;
 
-			if (blocked) {
+			setDecryptFailed(decryptFailed);
+			if (blocked || decryptFailed) {
 				await onBeforeLoad({ formNote });
 				if (cancelled) return;
-				// Drop the previous form so no note content lingers behind the unlock panel. The
-				// id guard stops the resulting effect re-run from looping.
+				// Drop the previous form so no note content lingers behind the unlock or
+				// cannot-decrypt panel. The id guard stops the resulting effect re-run from looping.
 				if (formNoteRef.current.id) clearFormNote();
 				return;
 			}
@@ -386,5 +398,6 @@ export default function useFormNote(dependencies: HookDependencies) {
 		formNote,
 		setFormNote: onSetFormNote,
 		resourceInfos,
+		decryptFailed: !!noteId && decryptFailedId === noteId,
 	};
 }

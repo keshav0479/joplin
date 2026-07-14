@@ -10,6 +10,7 @@ interface Props {
 	noteTitle: string;
 	hasNoteLockKey: boolean;
 	dispatch: Dispatch;
+	undecryptable?: boolean;
 }
 
 export default function NoteLockPanel(props: Props) {
@@ -48,6 +49,10 @@ export default function NoteLockPanel(props: Props) {
 	}, [props.dispatch]);
 
 	const renderAction = () => {
+		if (props.undecryptable) {
+			return <p className="message">{_('This note could not be decrypted. If it was encrypted prior to a password reset, the contents are no longer recoverable.')}</p>;
+		}
+
 		if (!props.hasNoteLockKey) {
 			return (
 				<>

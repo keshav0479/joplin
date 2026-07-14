@@ -29,7 +29,13 @@ export const runtime = (): CommandRuntime => {
 			// invoked directly.
 			if (!NoteLockSession.instance().isUnlocked()) throw new Error('Cannot disable encryption while the note lock session is locked');
 
-			await disableNoteLock(noteId);
+			try {
+				await disableNoteLock(noteId);
+			} catch (error) {
+				// WebCrypto reports a wrong-key decrypt as a generic OperationError.
+				if (error.name === 'OperationError') throw new Error(_('Could not disable encryption because the note could not be decrypted. If it was encrypted prior to a password reset, the contents are no longer recoverable.'));
+				throw error;
+			}
 		},
 		enabledCondition: 'oneNoteSelected && noteIsLocked && noteLockSessionUnlocked && !noteIsReadOnly && !noteIsDeleted && !inTrash && !inConflictFolder',
 	};

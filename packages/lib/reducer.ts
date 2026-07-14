@@ -182,6 +182,7 @@ export interface State extends WindowState {
 	isInsertingNotes: boolean;
 	hasEncryptedItems: boolean;
 	noteLockSessionUnlocked: boolean;
+	noteLockUndecryptableIds: string[];
 	needApiAuth: boolean;
 	profileConfig: ProfileConfig;
 	noteListRendererIds: string[];
@@ -254,6 +255,7 @@ export const defaultState: State = {
 	isInsertingNotes: false,
 	hasEncryptedItems: false,
 	noteLockSessionUnlocked: false,
+	noteLockUndecryptableIds: [],
 	needApiAuth: false,
 	profileConfig: null,
 	noteListRendererIds: getListRendererIds(),
@@ -1514,6 +1516,12 @@ const reducer = produce((draft: Draft<State> = defaultState, action: any) => {
 
 		case 'SET_NOTE_LOCK_SESSION_UNLOCKED':
 			draft.noteLockSessionUnlocked = action.value;
+			// A different password (e.g. after a reset) may decrypt these notes, so retry on unlock.
+			if (action.value) draft.noteLockUndecryptableIds = [];
+			break;
+
+		case 'NOTE_LOCK_UNDECRYPTABLE_ADD':
+			if (!draft.noteLockUndecryptableIds.includes(action.id)) draft.noteLockUndecryptableIds.push(action.id);
 			break;
 
 		case 'CLIPPER_SERVER_SET':
