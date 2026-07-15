@@ -64,6 +64,6 @@ export const runtime = (comp: WindowControl): CommandRuntime => {
 				}
 			}
 		},
-		enabledCondition: 'someNotesSelected && (!noteIsReadOnly || noteIsLocked)',
+		enabledCondition: 'someNotesSelected && !noteIsReadOnly',
 	};
 };

@@ -34,6 +34,7 @@ export const enabledCondition = (commandName: string) => {
 		editorPaneCondition,
 		'oneNoteSelected',
 		noteMustBeMarkdown ? 'noteIsMarkdown' : '',
+		'!noteLockContentUnavailable',
 		allowInViewerAndReadOnlyMode ? '' : '!noteIsReadOnly',
 	];
 

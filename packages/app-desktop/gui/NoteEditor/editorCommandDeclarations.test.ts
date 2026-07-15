@@ -9,6 +9,7 @@ const baseContext: Record<string, boolean> = {
 	oneNoteSelected: true,
 	noteIsMarkdown: true,
 	noteIsReadOnly: false,
+	noteLockContentUnavailable: false,
 	richTextEditorVisible: false,
 	hasActivePluginEditor: false,
 };
@@ -31,6 +32,16 @@ describe('editorCommandDeclarations', () => {
 				noteIsReadOnly: true,
 			},
 			{ textBold: false },
+		],
+		[
+			{
+				noteLockContentUnavailable: true,
+			},
+			{
+				textBold: false,
+				textCopy: false,
+				textSelectAll: false,
+			},
 		],
 		[
 			// In the Markdown editor, but only the viewer is visible

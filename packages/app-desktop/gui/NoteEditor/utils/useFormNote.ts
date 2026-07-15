@@ -35,6 +35,7 @@ export interface HookDependencies {
 	onAfterLoad(event: OnLoadEvent): void;
 	builtInEditorVisible: boolean;
 	noteLockSessionUnlocked: boolean;
+	onDecryptFailedChange(value: boolean): void;
 }
 
 type MapFormNoteCallback = (previousFormNote: FormNote)=> FormNote;
@@ -91,7 +92,7 @@ const loadNoteForForm = async (noteId: string): Promise<{ note: NoteEntity|null;
 };
 
 type InitNoteStateCallback = (note: NoteEntity, isNew: boolean)=> Promise<FormNote>;
-const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, clearFormNote: ()=> void, builtInEditorVisible: boolean, noteLockSessionUnlocked: boolean, setDecryptFailed: (value: boolean)=> void) => {
+const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: string, noteId: string, initNoteState: InitNoteStateCallback, clearFormNote: ()=> void, builtInEditorVisible: boolean, noteLockSessionUnlocked: boolean, setDecryptFailed: (value: boolean)=> void, setLoadBlocked: (value: boolean)=> void) => {
 	// Increasing the value of this counter cancels any ongoing note refreshes and starts
 	// a new refresh.
 	const [formNoteRefreshScheduled, setFormNoteRefreshScheduled] = useState<number>(0);
@@ -108,9 +109,11 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 		logger.info('Sync has finished and note has never been changed - reloading it');
 
 		const loadNote = async () => {
+			setDecryptFailed(false);
 			const { note: n, blocked, decryptFailed } = await loadNoteForForm(noteId);
 			if (event.cancelled || formNoteRef.current.hasChanged) return;
 
+			setLoadBlocked(blocked);
 			setDecryptFailed(decryptFailed);
 			if (blocked || decryptFailed) {
 				// The session locked with this note open (or its content stopped decrypting) - drop
@@ -193,14 +196,19 @@ const useRefreshFormNoteOnChange = (formNoteRef: RefObject<FormNote>, editorId: 
 
 export default function useFormNote(dependencies: HookDependencies) {
 	const {
-		noteId, isProvisional, titleInputRef, editorRef, onBeforeLoad, onAfterLoad, builtInEditorVisible, editorId, noteLockSessionUnlocked,
+		noteId, isProvisional, titleInputRef, editorRef, onBeforeLoad, onAfterLoad, builtInEditorVisible, editorId, noteLockSessionUnlocked, onDecryptFailedChange,
 	} = dependencies;
 
 	const [formNote, setFormNote] = useState<FormNote>(defaultFormNote());
 	const [isNewNote, setIsNewNote] = useState(false);
 	// Keyed by note id so a failure can never carry over to another note the user switches to.
 	const [decryptFailedId, setDecryptFailedId] = useState<string|null>(null);
-	const setDecryptFailed = useCallback((value: boolean) => setDecryptFailedId(value ? noteId : null), [noteId]);
+	const setDecryptFailed = useCallback((value: boolean) => {
+		setDecryptFailedId(value ? noteId : null);
+		onDecryptFailedChange(value);
+	}, [noteId, onDecryptFailedChange]);
+	const [loadBlockedId, setLoadBlockedId] = useState<string|null>(null);
+	const setLoadBlocked = useCallback((value: boolean) => setLoadBlockedId(value ? noteId : null), [noteId]);
 	const previousNoteId = usePrevious(formNote.id);
 	const [resourceInfos, setResourceInfos] = useState<ResourceInfos>({});
 
@@ -275,10 +283,11 @@ export default function useFormNote(dependencies: HookDependencies) {
 		setFormNote(formNoteRef.current);
 	}, []);
 
-	useRefreshFormNoteOnChange(formNoteRef, editorId, noteId, initNoteState, clearFormNote, builtInEditorVisible, noteLockSessionUnlocked, setDecryptFailed);
+	useRefreshFormNoteOnChange(formNoteRef, editorId, noteId, initNoteState, clearFormNote, builtInEditorVisible, noteLockSessionUnlocked, setDecryptFailed, setLoadBlocked);
 
 	useEffect(() => {
 		if (!noteId) {
+			setDecryptFailed(false);
 			if (formNote.id) setFormNote(defaultFormNote());
 			return () => {};
 		}
@@ -304,9 +313,11 @@ export default function useFormNote(dependencies: HookDependencies) {
 		}
 
 		async function loadNote() {
+			setDecryptFailed(false);
 			const { note: n, blocked, decryptFailed } = await loadNoteForForm(noteId);
 			if (cancelled) return;
 
+			setLoadBlocked(blocked);
 			setDecryptFailed(decryptFailed);
 			if (blocked || decryptFailed) {
 				await onBeforeLoad({ formNote });
@@ -399,5 +410,6 @@ export default function useFormNote(dependencies: HookDependencies) {
 		setFormNote: onSetFormNote,
 		resourceInfos,
 		decryptFailed: !!noteId && decryptFailedId === noteId,
+		loadBlocked: !!noteId && loadBlockedId === noteId,
 	};
 }

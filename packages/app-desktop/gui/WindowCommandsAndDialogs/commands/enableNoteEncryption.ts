@@ -31,7 +31,7 @@ export const runtime = (): CommandRuntime => {
 			}
 
 			if (!NoteLockKey.instance().load()) {
-				const setUpNow = bridge().showConfirmMessageBox(_('Encrypting a note requires a note lock password, which has not been set yet. Set it up now?'));
+				const setUpNow = bridge().showConfirmMessageBox(_('Encrypting a note requires a note lock password, which has not yet been set. Set it up now?'));
 				if (setUpNow) {
 					setNoteLockSetupContinuation(noteId);
 					context.dispatch({

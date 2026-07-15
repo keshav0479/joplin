@@ -37,6 +37,6 @@ export const runtime = (): CommandRuntime => {
 				throw error;
 			}
 		},
-		enabledCondition: 'oneNoteSelected && noteIsLocked && noteLockSessionUnlocked && !noteIsReadOnly && !noteIsDeleted && !inTrash && !inConflictFolder',
+		enabledCondition: 'oneNoteSelected && noteIsLocked && noteLockSessionUnlocked && !noteIsReadOnly && !noteLockContentUnavailable && !noteIsDeleted && !inTrash && !inConflictFolder',
 	};
 };

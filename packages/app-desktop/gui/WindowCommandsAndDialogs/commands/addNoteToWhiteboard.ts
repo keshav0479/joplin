@@ -92,6 +92,6 @@ export const runtime = (): CommandRuntime => {
 				{ changeSource: ItemChange.SOURCE_UNSPECIFIED },
 			);
 		},
-		enabledCondition: 'oneNoteSelected && activeNoteIsWhiteboard && !noteIsReadOnly',
+		enabledCondition: 'oneNoteSelected && activeNoteIsWhiteboard && !noteIsReadOnly && !noteLockContentUnavailable',
 	};
 };

@@ -23,8 +23,6 @@ export const runtime = (): CommandRuntime => {
 				},
 			});
 		},
-		// Locked notes are read-only while their content is unavailable, but deleting does not touch
-		// the content - and it is the only way to remove a note that can no longer be decrypted.
-		enabledCondition: '(!noteIsReadOnly || noteIsLocked) && !inTrash && someNotesSelected',
+		enabledCondition: '!noteIsReadOnly && !inTrash && someNotesSelected',
 	};
 };

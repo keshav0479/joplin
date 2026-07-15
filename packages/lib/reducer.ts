@@ -182,7 +182,9 @@ export interface State extends WindowState {
 	isInsertingNotes: boolean;
 	hasEncryptedItems: boolean;
 	noteLockSessionUnlocked: boolean;
-	noteLockUndecryptableIds: string[];
+	// Only used to disable menu actions that update the active note in the editor. Bulk actions
+	// do not need to be disabled because they do not result in an error.
+	activeNoteIsUndecryptable: boolean;
 	needApiAuth: boolean;
 	profileConfig: ProfileConfig;
 	noteListRendererIds: string[];
@@ -255,7 +257,7 @@ export const defaultState: State = {
 	isInsertingNotes: false,
 	hasEncryptedItems: false,
 	noteLockSessionUnlocked: false,
-	noteLockUndecryptableIds: [],
+	activeNoteIsUndecryptable: false,
 	needApiAuth: false,
 	profileConfig: null,
 	noteListRendererIds: getListRendererIds(),
@@ -1516,12 +1518,10 @@ const reducer = produce((draft: Draft<State> = defaultState, action: any) => {
 
 		case 'SET_NOTE_LOCK_SESSION_UNLOCKED':
 			draft.noteLockSessionUnlocked = action.value;
-			// A different password (e.g. after a reset) may decrypt these notes, so retry on unlock.
-			if (action.value) draft.noteLockUndecryptableIds = [];
 			break;
 
-		case 'NOTE_LOCK_UNDECRYPTABLE_ADD':
-			if (!draft.noteLockUndecryptableIds.includes(action.id)) draft.noteLockUndecryptableIds.push(action.id);
+		case 'SET_ACTIVE_NOTE_IS_UNDECRYPTABLE':
+			draft.activeNoteIsUndecryptable = action.value;
 			break;
 
 		case 'CLIPPER_SERVER_SET':

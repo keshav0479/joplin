@@ -20,6 +20,7 @@ const defaultFormNoteProps: HookDependencies = {
 	editorId: 'editor',
 	builtInEditorVisible: false,
 	noteLockSessionUnlocked: false,
+	onDecryptFailedChange: () => {},
 };
 
 describe('useFormNote', () => {
@@ -39,10 +40,11 @@ describe('useFormNote', () => {
 		const decryptedKeyMock = jest.spyOn(NoteLockSession.instance(), 'decryptedKey').mockReturnValue({ id: 'key-id', plainText: 'key' });
 		const decryptBodyMock = jest.spyOn(NoteLockNote, 'decryptBody').mockImplementation(async note => ({ ...note, body: 'secret content' }));
 		const onBeforeLoad = jest.fn();
+		const onDecryptFailedChange = jest.fn();
 
 		try {
 			const lockedRender = renderHook(props => useFormNote(props), {
-				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, onBeforeLoad },
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, onBeforeLoad, onDecryptFailedChange },
 			});
 			// The blocked load produces no state change to wait for; onBeforeLoad is its last
 			// await, so once it has run a single flush completes the branch.
@@ -53,9 +55,11 @@ describe('useFormNote', () => {
 				body: '',
 				noteLockKey: null,
 			});
+			expect(lockedRender.result.current.loadBlocked).toBe(true);
+			expect(onDecryptFailedChange).toHaveBeenLastCalledWith(false);
 
 			isUnlockedMock.mockReturnValue(true);
-			lockedRender.rerender({ ...defaultFormNoteProps, noteId: testNote.id, onBeforeLoad, noteLockSessionUnlocked: true });
+			lockedRender.rerender({ ...defaultFormNoteProps, noteId: testNote.id, onBeforeLoad, onDecryptFailedChange, noteLockSessionUnlocked: true });
 			await waitFor(() => {
 				expect(lockedRender.result.current.formNote).toMatchObject({
 					id: testNote.id,
@@ -64,6 +68,7 @@ describe('useFormNote', () => {
 					noteLockKey: { id: 'key-id', plainText: 'key' },
 				});
 			});
+			expect(lockedRender.result.current.loadBlocked).toBe(false);
 			lockedRender.unmount();
 
 			Setting.setValue('featureFlag.noteLock', false);
@@ -92,10 +97,11 @@ describe('useFormNote', () => {
 
 		const isUnlockedMock = jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValue(true);
 		const decryptBodyMock = jest.spyOn(NoteLockNote, 'decryptBody').mockRejectedValue(new Error('OperationError'));
+		const onDecryptFailedChange = jest.fn();
 
 		try {
 			const render = renderHook(props => useFormNote(props), {
-				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true },
+				initialProps: { ...defaultFormNoteProps, noteId: testNote.id, noteLockSessionUnlocked: true, onDecryptFailedChange },
 			});
 			await waitFor(() => {
 				expect(render.result.current.decryptFailed).toBe(true);
@@ -104,6 +110,8 @@ describe('useFormNote', () => {
 				id: '',
 				body: '',
 			});
+			expect(render.result.current.loadBlocked).toBe(false);
+			expect(onDecryptFailedChange).toHaveBeenLastCalledWith(true);
 			render.unmount();
 		} finally {
 			isUnlockedMock.mockRestore();

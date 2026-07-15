@@ -118,8 +118,11 @@ function NoteEditorContent(props: NoteEditorProps) {
 	const effectiveNoteId = useEffectiveNoteId(props);
 	const { editorPlugin, editorView } = usePluginEditorView(props.plugins);
 	const builtInEditorVisible = !editorPlugin;
+	const onDecryptFailedChange = useCallback((value: boolean) => {
+		props.dispatch({ type: 'SET_ACTIVE_NOTE_IS_UNDECRYPTABLE', value });
+	}, [props.dispatch]);
 
-	const { formNote, setFormNote, isNewNote, resourceInfos, decryptFailed } = useFormNote({
+	const { formNote, setFormNote, isNewNote, resourceInfos, decryptFailed, loadBlocked } = useFormNote({
 		noteId: effectiveNoteId,
 		isProvisional: props.isProvisional,
 		titleInputRef: titleInputRef,
@@ -129,15 +132,10 @@ function NoteEditorContent(props: NoteEditorProps) {
 		builtInEditorVisible,
 		editorId,
 		noteLockSessionUnlocked: props.noteLockSessionUnlocked,
+		onDecryptFailedChange,
 	});
 	setFormNoteRef.current = setFormNote;
 	formNoteRef.current = { ...formNote };
-
-	// Menu gating happens in stateToWhenClauseContext, which can only read the redux state.
-	useEffect(() => {
-		if (!decryptFailed || !effectiveNoteId) return;
-		props.dispatch({ type: 'NOTE_LOCK_UNDECRYPTABLE_ADD', id: effectiveNoteId });
-	}, [decryptFailed, effectiveNoteId, props.dispatch]);
 
 	useEffect(() => {
 		if (!isNoteLockEnabled()) return () => {};
@@ -718,8 +716,7 @@ function NoteEditorContent(props: NoteEditorProps) {
 		const formNoteLoaded = formNote.id === effectiveNoteId;
 		const showLockPanel = formNoteLoaded
 			? !props.noteLockSessionUnlocked && !formNote.hasChanged
-			// A blocked load cleared the form - keep the panel up until the decrypted note arrives.
-			: !props.noteLockSessionUnlocked || !formNote.id;
+			: !props.noteLockSessionUnlocked || loadBlocked;
 		if (showLockPanel) {
 			return (
 				<div style={styles.root} ref={containerRef}>
