@@ -104,7 +104,8 @@ function NoteEditorContent(props: NoteEditorProps) {
 		await saveNoteIfWillChange(event.formNote);
 		// The lock must wait for the pending saves of the note being left: a locked note's save
 		// needs the unlocked session to encrypt, so locking first would drop the last edits.
-		if (isNoteLockEnabled() && event.formNote.id && Setting.value('noteLock.lockOnNoteSwitch')) {
+		// The note being left may have no form note at all (unlock or cannot-decrypt overlay).
+		if (isNoteLockEnabled() && Setting.value('noteLock.lockOnNoteSwitch')) {
 			await event.formNote.saveActionQueue?.waitForAllDone();
 			NoteLockSession.instance().lock();
 		}

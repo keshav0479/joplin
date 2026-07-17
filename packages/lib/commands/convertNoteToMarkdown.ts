@@ -73,6 +73,6 @@ export const runtime = (): CommandRuntime => {
 				await shim.showErrorDialog(_('Could not convert notes to Markdown: %s', error.message));
 			}
 		},
-		enabledCondition: 'selectionIncludesHtmlNotes && (multipleNotesSelected || !noteIsReadOnly) && (multipleNotesSelected || !noteLockContentUnavailable)',
+		enabledCondition: 'selectionIncludesHtmlNotes && (multipleNotesSelected || !noteIsReadOnly)',
 	};
 };

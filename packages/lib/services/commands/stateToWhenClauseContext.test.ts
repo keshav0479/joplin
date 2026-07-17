@@ -54,7 +54,7 @@ describe('stateToWhenClauseContext', () => {
 			isLocked: 0,
 			expected: false,
 		},
-	])('should set noteLockContentUnavailable when $label', ({ noteLockSessionUnlocked, activeNoteIsUndecryptable, isLocked, expected }) => {
+	])('should make the note read-only when $label', ({ noteLockSessionUnlocked, activeNoteIsUndecryptable, isLocked, expected }) => {
 		const applicationState = buildState({
 			selectedNoteIds: ['1'],
 			notes: [{ id: '1', is_locked: isLocked, deleted_time: 0 }],
@@ -63,8 +63,8 @@ describe('stateToWhenClauseContext', () => {
 		});
 		const resultingState = stateToWhenClauseContext(applicationState);
 
-		expect(resultingState.noteLockContentUnavailable).toBe(expected);
-		expect(resultingState.noteIsReadOnly).toBe(false);
+		expect(resultingState.noteIsReadOnly).toBe(expected);
+		expect(resultingState.noteIsReadOnlyShare).toBe(false);
 	});
 
 	it('should be in trash if selected note has been deleted and selected folder is trash', async () => {
