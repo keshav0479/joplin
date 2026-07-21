@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { memo, useCallback, useMemo } from 'react';
 import { connect } from 'react-redux';
-import { Text, StyleSheet, TextStyle, ViewStyle, AccessibilityInfo } from 'react-native';
+import { Text, StyleSheet, TextStyle, ViewStyle, AccessibilityInfo, View } from 'react-native';
 import Checkbox from './Checkbox';
 import Note from '@joplin/lib/models/Note';
 import time from '@joplin/lib/time';
@@ -16,6 +16,7 @@ import { escapeRegExp } from '@joplin/lib/string-utils';
 import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import Icon from './Icon';
 
 interface Props {
 	dispatch: Dispatch;
@@ -71,6 +72,15 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 		return StyleSheet.create({
 			listItem,
 			listItemText,
+			titleRow: {
+				flexDirection: 'row',
+				alignItems: 'center',
+			},
+			lockIcon: {
+				color: theme.colorFaded,
+				fontSize: theme.fontSize,
+				marginRight: 8,
+			},
 			selectionWrapper,
 			listItemPressableWithoutCheckbox,
 			listItemPressableWithCheckbox,
@@ -173,6 +183,8 @@ const NoteItemComponent: React.FC<Props> = memo(props => {
 		accessibilityLabel={_('to-do: %s', noteTitle)}
 	/> : null;
 
+	const titleElement = <Text style={listItemTextStyle}>{displayedNoteTitle}</Text>;
+
 	const pressableProps = {
 		style: isTodo ? styles.listItemPressableWithCheckbox : styles.listItemPressableWithoutCheckbox,
 		accessibilityHint: props.noteSelectionEnabled ? '' : _('Opens note'),
@@ -189,7 +201,12 @@ const NoteItemComponent: React.FC<Props> = memo(props => {
 			onPress={onPress}
 			beforePressable={todoCheckbox}
 		>
-			<Text style={listItemTextStyle}>{displayedNoteTitle}</Text>
+			{isNoteLockEnabled() ? (
+				<View style={styles.titleRow}>
+					{!!note.is_locked && <Icon name='fas fa-lock' style={styles.lockIcon} accessibilityLabel={_('Locked')} />}
+					{titleElement}
+				</View>
+			) : titleElement}
 		</MultiTouchableOpacity>
 	);
 });
