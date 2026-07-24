@@ -35,6 +35,8 @@ import shared, { BaseNoteScreenComponent, Props as BaseProps } from '@joplin/lib
 import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
 import NoteLockKey, { DecryptedNoteLockKey } from '@joplin/lib/services/noteLock/NoteLockKey';
+import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
+import { disableNoteLock, enableNoteLock } from '@joplin/lib/services/noteLock/setNoteLockState';
 import eventManager, { EventName, NoteLockNoteStateChangeEvent } from '@joplin/lib/eventManager';
 import NoteLockPanel from './NoteLockPanel';
 import SelectDateTimeDialog from '../../SelectDateTimeDialog';
@@ -768,7 +770,13 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 
 		if (isNoteLockEnabled()) eventManager.off(EventName.NoteLockNoteStateChange, this.noteLockNoteStateChange_);
 
-		void this.flushSavesAndAutoLock_(this.state.note.id);
+		void (async () => {
+			await this.saveActionQueue(this.state.note.id).processAllNow();
+			// Auto lock only after the queue drains, so a pending locked-note save can still encrypt.
+			if (isNoteLockEnabled() && Setting.value('noteLock.lockOnNoteSwitch')) {
+				NoteLockSession.instance().lock();
+			}
+		})();
 
 		// It cannot theoretically be undefined, since componentDidMount should always be called before
 		// componentWillUnmount, but with React Native the impossible often becomes possible.
@@ -781,14 +789,6 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			type: 'SET_NOTE_EDITOR_VISIBLE',
 			visible: false,
 		});
-	}
-
-	private async flushSavesAndAutoLock_(noteId: string) {
-		await this.saveActionQueue(noteId).processAllNow();
-		// Auto lock only after the queue drains, so a pending locked-note save can still encrypt.
-		if (isNoteLockEnabled() && Setting.value('noteLock.lockOnNoteSwitch')) {
-			NoteLockSession.instance().lock();
-		}
 	}
 
 	private async reloadNoteAndUpdateRefreshKey() {
@@ -873,13 +873,19 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		const noteLockKey = event.isLocked && NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
 		const newNote = { ...this.state.note, is_locked: event.isLocked ? 1 : 0, isDecrypted: event.isLocked };
 		this.setState({ note: newNote, noteLockKey });
+		this.scheduleSave({ ...this.state, note: newNote, noteLockKey });
 	};
 
-	private applyNoteLockState_(isLocked: boolean) {
-		const noteLockKey = isLocked ? NoteLockSession.instance().decryptedKey() : null;
-		const newNote = { ...this.state.note, is_locked: isLocked ? 1 : 0, isDecrypted: isLocked };
-		this.setState({ note: newNote, noteLockKey });
-		this.scheduleSave({ ...this.state, note: newNote, noteLockKey });
+	private async setNoteLockState_(enable: boolean) {
+		try {
+			if (enable) {
+				await enableNoteLock(this.state.note.id);
+			} else {
+				await disableNoteLock(this.state.note.id);
+			}
+		} catch (error) {
+			await this.props.dialogs.error(error.message);
+		}
 	}
 
 	private enableNoteEncryption_onPress = () => {
@@ -895,17 +901,16 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			this.setState({ noteLockUnlockPromptVisible: true });
 			return;
 		}
-		this.applyNoteLockState_(true);
+		void this.setNoteLockState_(true);
 	};
 
 	private disableNoteEncryption_onPress = () => {
-		if (!NoteLockSession.instance().isUnlocked()) return;
-		this.applyNoteLockState_(false);
+		void this.setNoteLockState_(false);
 	};
 
 	private noteLockUnlockPrompt_unlocked = () => {
 		this.setState({ noteLockUnlockPromptVisible: false });
-		this.applyNoteLockState_(true);
+		void this.setNoteLockState_(true);
 	};
 
 	private noteLockUnlockPrompt_close = () => {
@@ -1194,8 +1199,13 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	}
 
 	private async share_onPress() {
-		const shareText = `${this.state.note.title}\n\n${this.state.note.body}`;
-		const filename = this.state.note.id ?? uuid.create();
+		let noteToShare = this.state.note;
+		if (isNoteLockEnabled() && NoteLockNote.isLocked(noteToShare)) {
+			// The state note may hold the encrypted body, so the shared contents come from a gated load.
+			noteToShare = await Note.load(noteToShare.id, { useNoteLock: true });
+		}
+		const shareText = `${noteToShare.title}\n\n${noteToShare.body}`;
+		const filename = noteToShare.id ?? uuid.create();
 
 		if (shareText.length > 100000) {
 			let fileToShare;
@@ -1359,7 +1369,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 
 		const pluginCommands = pluginUtils.commandNamesFromViews(this.props.plugins, 'noteToolbar');
 
-		const cacheKey = md5([isTodo, isSaved, pluginCommands.join(','), readOnly, this.state.mode, isCodeView, note.is_locked, this.props.noteLockSessionUnlocked].join('_'));
+		const cacheKey = md5([isTodo, isSaved, pluginCommands.join(','), readOnly, this.state.mode, isCodeView, note.is_locked, this.props.noteLockSessionUnlocked, !!this.state.noteLockKey].join('_'));
 		if (!this.menuOptionsCache_) this.menuOptionsCache_ = {};
 
 		if (this.menuOptionsCache_[cacheKey]) return this.menuOptionsCache_[cacheKey];
@@ -1410,7 +1420,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 				onPress: () => {
 					void this.share_onPress();
 				},
-				disabled: readOnly,
+				disabled: readOnly || (isNoteLockEnabled() && !!note.is_locked && (!this.props.noteLockSessionUnlocked || !this.state.noteLockKey)),
 			});
 		}
 

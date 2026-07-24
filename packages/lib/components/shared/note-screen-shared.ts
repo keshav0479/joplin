@@ -59,8 +59,8 @@ export interface BaseState {
 	readOnly: boolean;
 	noteLastLoadTime: number;
 	// Captured with a locked note's plaintext so pending saves can re-encrypt even after the
-	// session locks.
-	noteLockKey: DecryptedNoteLockKey|null;
+	// session locks. Optional because only the mobile note screen populates it.
+	noteLockKey?: DecryptedNoteLockKey|null;
 }
 
 export interface AttachFileAsset {
@@ -90,7 +90,7 @@ type ResourceHandler = (...args: any[])=> void | Promise<void>;
 
 interface Shared {
 	noteExists?: (noteId: string)=> Promise<boolean>;
-	handleNoteDeletedWhileEditing_?: (note: NoteEntity)=> Promise<NoteEntity>;
+	handleNoteDeletedWhileEditing_?: (note: NoteEntity, noteLockKey?: DecryptedNoteLockKey|null)=> Promise<NoteEntity>;
 	saveNoteButton_press?: (comp: BaseNoteScreenComponent, state: BaseState, folderId: string, options: SaveNoteOptions)=> Promise<void>;
 	saveOneProperty?: (comp: BaseNoteScreenComponent, name: string, value: unknown)=> void;
 	noteComponent_change?: (comp: BaseNoteScreenComponent, propName: string, propValue: unknown)=> void;
@@ -120,27 +120,24 @@ shared.noteExists = async function(noteId: string) {
 
 // Note has been deleted while user was modifying it. In that case, we
 // just save a new note so that user can keep editing.
-shared.handleNoteDeletedWhileEditing_ = async (note: NoteEntity) => {
+shared.handleNoteDeletedWhileEditing_ = async (note: NoteEntity, noteLockKey: DecryptedNoteLockKey|null = null) => {
 	if (await shared.noteExists(note.id)) return null;
 
 	reg.logger().info('Note has been deleted while it was being edited - recreating it.');
 
 	let newNote = { ...note };
 	delete newNote.id;
+
+	// The gated save keeps a locked note's plaintext body out of the database, and the gated
+	// load populates the decrypted-state marker on the recreated note.
+	if (isNoteLockEnabled()) {
+		newNote = await Note.save(newNote, { useNoteLock: true, noteLockKey });
+		return Note.load(newNote.id, { useNoteLock: true });
+	}
+
 	newNote = await Note.save(newNote);
 
 	return Note.load(newNote.id);
-};
-
-// The recreate save strips the decrypted-state marker, but the recreated body is the
-// in-memory plaintext, so the marker must be restored for a gated save.
-const handleNoteDeletedKeepingDecryptedState_ = async (note: NoteEntity) => {
-	const recreatedNote = await shared.handleNoteDeletedWhileEditing_(note);
-	const isDecrypted = (note as Record<string, unknown>).isDecrypted;
-	if (recreatedNote && isNoteLockEnabled() && NoteLockNote.isLocked(recreatedNote) && isDecrypted) {
-		(recreatedNote as Record<string, unknown>).isDecrypted = isDecrypted;
-	}
-	return recreatedNote;
 };
 
 shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, state: BaseState, folderId: string = null, options: SaveNoteOptions = null) {
@@ -151,7 +148,7 @@ shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, stat
 
 	let note = { ...state.note };
 
-	const recreatedNote = await handleNoteDeletedKeepingDecryptedState_(note);
+	const recreatedNote = await shared.handleNoteDeletedWhileEditing_(note, comp.state.noteLockKey);
 	if (recreatedNote) note = recreatedNote;
 
 	if (folderId) {
@@ -165,13 +162,6 @@ shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, stat
 	}
 
 	const isProvisionalNote = comp.props.provisionalNoteIds.includes(note.id);
-
-	if (isNoteLockEnabled() && comp.state.note?.id === note.id) {
-		// The lock state may change between scheduling and execution (e.g. encryption enabled
-		// from the note menu), so the save uses the latest values.
-		note.is_locked = comp.state.note.is_locked;
-		if ('isDecrypted' in comp.state.note) (note as Record<string, unknown>).isDecrypted = (comp.state.note as Record<string, unknown>).isDecrypted;
-	}
 
 	const saveOptions = {
 		userSideValidation: true,
@@ -187,11 +177,21 @@ shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, stat
 		if (saveOptions.fields && saveOptions.fields.indexOf('title') < 0) saveOptions.fields.push('title');
 	}
 
-	// A gated save cannot persist the lock state or body partially: the encrypted body, its
-	// extracted resource ids and is_locked must always be written together.
-	if (isNoteLockEnabled() && saveOptions.fields.length && (saveOptions.fields.includes('is_locked') || (NoteLockNote.isLocked(note) && saveOptions.fields.includes('body')))) {
-		for (const field of ['is_locked', 'body', 'extracted_resource_ids']) {
-			if (!saveOptions.fields.includes(field)) saveOptions.fields.push(field);
+	if (isNoteLockEnabled()) {
+		if (comp.state.note?.id === note.id) {
+			// The lock state may change between scheduling and execution (e.g. encryption enabled
+			// from the note menu), so the save uses the latest values.
+			note.is_locked = comp.state.note.is_locked;
+			(note as Record<string, unknown>).isDecrypted = (comp.state.note as Record<string, unknown>).isDecrypted;
+		}
+
+		// A gated save cannot persist the lock state or body partially: the encrypted body, its
+		// extracted resource ids and is_locked must always be written together. The lock state is
+		// also compared against lastSavedNote because the field diff above ran before the pickup.
+		if (saveOptions.fields.length && (saveOptions.fields.includes('is_locked') || (note.is_locked ?? 0) !== (state.lastSavedNote.is_locked ?? 0) || (NoteLockNote.isLocked(note) && saveOptions.fields.includes('body')))) {
+			for (const field of ['is_locked', 'body', 'extracted_resource_ids']) {
+				if (!saveOptions.fields.includes(field)) saveOptions.fields.push(field);
+			}
 		}
 	}
 
@@ -216,13 +216,8 @@ shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, stat
 		if (!hasAutoTitle) note.title = stateNote.title;
 		note.body = stateNote.body;
 		note.todo_completed = stateNote.todo_completed;
-
-		if (isNoteLockEnabled()) {
-			// Without this, the state update below would revert a lock state change made during
-			// the save, and the already scheduled lock save would pick up the reverted value.
-			note.is_locked = stateNote.is_locked;
-			if ('isDecrypted' in stateNote) (note as Record<string, unknown>).isDecrypted = (stateNote as Record<string, unknown>).isDecrypted;
-		}
+		note.is_locked = stateNote.is_locked;
+		(note as Record<string, unknown>).isDecrypted = (stateNote as Record<string, unknown>).isDecrypted;
 	}
 
 	const newState: Partial<BaseState> = {
@@ -268,29 +263,31 @@ shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, stat
 	releaseMutex();
 };
 
+const saveNotePartial = async (comp: BaseNoteScreenComponent, note: NoteEntity, name: string, toSave: Record<string, unknown>) => {
+	if (isNoteLockEnabled() && name === 'body' && NoteLockNote.isLocked(note)) {
+		// An ungated partial body save would persist the plaintext of a locked note (e.g. a
+		// checkbox toggled in the viewer), so the body goes through a gated save instead.
+		toSave.is_locked = note.is_locked;
+		toSave.isDecrypted = (note as Record<string, unknown>).isDecrypted;
+		return await Note.save(toSave, {
+			useNoteLock: true,
+			noteLockKey: comp.state.noteLockKey,
+			fields: ['body', 'is_locked', 'extracted_resource_ids'],
+		}) as Record<string, unknown>;
+	}
+	return await Note.save(toSave) as Record<string, unknown>;
+};
+
 shared.saveOneProperty = async function(comp: BaseNoteScreenComponent, name: string, value: unknown) {
 	let note = { ...comp.state.note };
 
-	const recreatedNote = await handleNoteDeletedKeepingDecryptedState_(note);
+	const recreatedNote = await shared.handleNoteDeletedWhileEditing_(note, comp.state.noteLockKey);
 	if (recreatedNote) note = recreatedNote;
 
 	const toSave: Record<string, unknown> = { id: note.id };
 	toSave[name] = value;
 
-	let saved: Record<string, unknown>;
-	if (isNoteLockEnabled() && name === 'body' && NoteLockNote.isLocked(note)) {
-		// An ungated partial body save would persist the plaintext of a locked note (e.g. a
-		// checkbox toggled in the viewer), so the body goes through a gated save instead.
-		toSave.is_locked = note.is_locked;
-		if ('isDecrypted' in note) toSave.isDecrypted = (note as Record<string, unknown>).isDecrypted;
-		saved = await Note.save(toSave, {
-			useNoteLock: true,
-			noteLockKey: comp.state.noteLockKey,
-			fields: ['body', 'is_locked', 'extracted_resource_ids'],
-		}) as Record<string, unknown>;
-	} else {
-		saved = await Note.save(toSave) as Record<string, unknown>;
-	}
+	const saved = await saveNotePartial(comp, note, name, toSave);
 	(note as Record<string, unknown>)[name] = saved[name];
 
 	const stateNote = { ...note };
@@ -298,6 +295,7 @@ shared.saveOneProperty = async function(comp: BaseNoteScreenComponent, name: str
 		// The lock state may have changed during the save - keep the latest value in the state
 		// note (but not in lastSavedNote, so the next save still detects the change).
 		stateNote.is_locked = comp.state.note.is_locked;
+		(stateNote as Record<string, unknown>).isDecrypted = (comp.state.note as Record<string, unknown>).isDecrypted;
 	}
 
 	comp.setState({
@@ -361,20 +359,22 @@ shared.isModified = function(comp: BaseNoteScreenComponent) {
 shared.reloadNote = async (comp: BaseNoteScreenComponent) => {
 	const isProvisionalNote = comp.props.provisionalNoteIds.includes(comp.props.noteId);
 
-	let note = await Note.load(comp.props.noteId);
-
+	let note: NoteEntity;
 	let noteLockKey: DecryptedNoteLockKey|null = null;
 	let noteLockBlocked = false;
-	if (isNoteLockEnabled() && NoteLockNote.isLocked(note)) {
-		if (NoteLockSession.instance().isUnlocked()) {
+	if (isNoteLockEnabled()) {
+		const lockState = await Note.load(comp.props.noteId, { fields: ['is_locked'] });
+		if (NoteLockNote.isLocked(lockState) && NoteLockSession.instance().isUnlocked()) {
 			note = await Note.load(comp.props.noteId, { useNoteLock: true });
 			noteLockKey = NoteLockSession.instance().decryptedKey();
 		} else {
-			// Both note and lastSavedNote carry the same blank body, so a diff-based save can
-			// never write it over the real note.
-			note = { ...note, body: '' };
-			noteLockBlocked = true;
+			// While blocked, note and lastSavedNote both carry the encrypted body, so a
+			// diff-based save cannot write it, and the note screen hides it from the editor.
+			note = await Note.load(comp.props.noteId);
+			noteLockBlocked = NoteLockNote.isLocked(lockState);
 		}
+	} else {
+		note = await Note.load(comp.props.noteId);
 	}
 
 	const panes = comp.props.noteVisiblePanes;
@@ -437,8 +437,7 @@ shared.initState = async function(comp: BaseNoteScreenComponent) {
 
 	// Ensure that only empty notes created for shared content are populated with sharedData, because in some cases
 	// existing notes can be overwritten by the shared data. See https://github.com/laurent22/joplin/issues/11479
-	// A locked note loaded while the session is locked has a blank body, not an empty note.
-	if (comp.props.sharedData && note && note.title.length === 0 && note.body.length === 0 && !(isNoteLockEnabled() && NoteLockNote.isLocked(note))) {
+	if (comp.props.sharedData && note && note.title.length === 0 && note.body.length === 0) {
 		// Use the note returned by reloadNote directly to avoid a race condition where
 		// comp.state.note is still the initial empty note (Note.new() with parent_id='')
 		// because React hasn't flushed reloadNote's setState yet. Without this, the

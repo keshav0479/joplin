@@ -46,6 +46,21 @@ const mockUnlockedSession = () => {
 	jest.spyOn(NoteLockService, 'withDecryptedKey').mockImplementation(
 		async callback => callback({ encryptString: async (text: string) => `enc(${text})` } as ScopedNoteLockService),
 	);
+	jest.spyOn(NoteLockNote, 'decryptBody').mockImplementation(async note => ({
+		...note,
+		isDecrypted: !!note.is_locked,
+		body: note.is_locked ? String(note.body).replace(/^enc\(([\s\S]*)\)$/, '$1') : note.body,
+	}));
+};
+
+// Every save of a locked note body must be gated, so plaintext never reaches the database
+// (including the transient save when a deleted note is recreated).
+const expectGatedLockedSaves = (saveSpy: jest.SpyInstance) => {
+	for (const [note, options] of saveSpy.mock.calls) {
+		if ((note as NoteEntity).is_locked && 'body' in (note as NoteEntity)) {
+			expect((options as { useNoteLock?: boolean })?.useNoteLock).toBe(true);
+		}
+	}
 };
 
 describe('note-screen-shared', () => {
@@ -70,8 +85,9 @@ describe('note-screen-shared', () => {
 		jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValue(false);
 		const lockedComp = makeComp(testNote);
 		await shared.reloadNote(lockedComp);
-		expect(lockedComp.state.note.body).toBe('');
-		expect(lockedComp.state.lastSavedNote.body).toBe('');
+		// The encrypted body stays in both state notes, so a diff-based save cannot write it.
+		expect(lockedComp.state.note.body).toBe('ciphertext');
+		expect(lockedComp.state.lastSavedNote.body).toBe('ciphertext');
 		expect(lockedComp.state.readOnly).toBe(true);
 		expect(lockedComp.state.mode).toBe('view');
 		expect(lockedComp.state.noteLockKey).toBeNull();
@@ -132,6 +148,7 @@ describe('note-screen-shared', () => {
 		// e.g. deleted from another client while the note was open.
 		await Note.batchDelete([testNote.id]);
 
+		const saveSpy = jest.spyOn(Note, 'save');
 		await shared.saveOneProperty(comp, 'body', '- [x] task');
 
 		const newId = comp.state.note.id;
@@ -139,6 +156,7 @@ describe('note-screen-shared', () => {
 		const savedNote = await Note.load(newId);
 		expect(savedNote.is_locked).toBe(1);
 		expect(savedNote.body).toBe('enc(- [x] task)');
+		expectGatedLockedSaves(saveSpy);
 	});
 
 	it('should not revert a lock state change that happens while a save is in flight', async () => {
@@ -189,6 +207,7 @@ describe('note-screen-shared', () => {
 		const comp = makeComp(testNote, { note: flippedNote });
 		await Note.batchDelete([testNote.id]);
 
+		const saveSpy = jest.spyOn(Note, 'save');
 		await shared.saveNoteButton_press(comp, comp.state, null, null);
 
 		const newId = comp.state.note.id;
@@ -198,6 +217,26 @@ describe('note-screen-shared', () => {
 		expect(savedNote.body).toBe('enc(plain text)');
 		expect(comp.state.note.body).toBe('plain text');
 		expect((comp.state.note as Record<string, unknown>).isDecrypted).toBe(true);
+		expectGatedLockedSaves(saveSpy);
+	});
+
+	it('should persist the lock state for a pending save that does not touch the body', async () => {
+		const testNote = await Note.load((await Note.save({ title: 'Plain', body: 'plain text', parent_id: folderId })).id);
+
+		mockUnlockedSession();
+
+		const comp = makeComp(testNote);
+		// A title-only save scheduled before the flip: its field diff has no is_locked or body,
+		// so only the lastSavedNote comparison can pull the lock transition into the save.
+		const snapshotState = { ...comp.state, note: { ...comp.state.note, title: 'edited title' } };
+		const flippedNote = { ...comp.state.note, is_locked: 1, isDecrypted: true };
+		comp.state.note = flippedNote;
+		await shared.saveNoteButton_press(comp, snapshotState, null, null);
+
+		const savedNote = await Note.load(testNote.id);
+		expect(savedNote.is_locked).toBe(1);
+		expect(savedNote.title).toBe('edited title');
+		expect(savedNote.body).toBe('enc(plain text)');
 	});
 
 	it('should save with the latest lock state when it changed after scheduling', async () => {
