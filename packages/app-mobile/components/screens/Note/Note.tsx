@@ -8,7 +8,7 @@ import checkPermissions from '../../../utils/checkPermissions';
 import NoteEditor from '../../NoteEditor/NoteEditor';
 import { EditorControl } from '../../NoteEditor/types';
 import * as React from 'react';
-import { Keyboard, View, TextInput, StyleSheet, Linking, Share, NativeSyntheticEvent, useWindowDimensions, Modal } from 'react-native';
+import { Keyboard, View, TextInput, StyleSheet, Linking, Share, NativeSyntheticEvent, useWindowDimensions } from 'react-native';
 import { Platform, PermissionsAndroid } from 'react-native';
 import { connect } from 'react-redux';
 import Note from '@joplin/lib/models/Note';
@@ -39,6 +39,7 @@ import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
 import { disableNoteLock, enableNoteLock } from '@joplin/lib/services/noteLock/setNoteLockState';
 import eventManager, { EventName, NoteLockNoteStateChangeEvent } from '@joplin/lib/eventManager';
 import NoteLockPanel from './NoteLockPanel';
+import DismissibleDialog, { DialogVariant } from '../../DismissibleDialog';
 import SelectDateTimeDialog from '../../SelectDateTimeDialog';
 import ShareExtension from '../../../utils/ShareExtension.js';
 import { FolderEntity, NoteEntity, ResourceEntity } from '@joplin/lib/services/database/types';
@@ -2022,14 +2023,18 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 					onClose={this.onPublishDialogClose_}
 				/>
 				{this.state.noteLockUnlockPromptVisible && (
-					<Modal visible={true} onRequestClose={this.noteLockUnlockPrompt_close}>
+					<DismissibleDialog
+						themeId={this.props.themeId}
+						visible={true}
+						onDismiss={this.noteLockUnlockPrompt_close}
+						size={DialogVariant.SmallResize}
+					>
 						<NoteLockPanel
 							themeId={this.props.themeId}
 							hasNoteLockKey={true}
 							onUnlocked={this.noteLockUnlockPrompt_unlocked}
-							onCancel={this.noteLockUnlockPrompt_close}
 						/>
-					</Modal>
+					</DismissibleDialog>
 				)}
 			</View>
 		);

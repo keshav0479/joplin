@@ -10,7 +10,6 @@ interface Props {
 	themeId: number;
 	hasNoteLockKey: boolean;
 	onUnlocked?: ()=> void;
-	onCancel?: ()=> void;
 }
 
 const NoteLockPanel = (props: Props) => {
@@ -56,10 +55,6 @@ const NoteLockPanel = (props: Props) => {
 			},
 			buttonContainer: {
 				alignSelf: 'stretch',
-			},
-			cancelButtonContainer: {
-				alignSelf: 'stretch',
-				marginTop: theme.itemMarginTop,
 			},
 		});
 	}, [theme]);
@@ -112,11 +107,6 @@ const NoteLockPanel = (props: Props) => {
 		<View style={styles.container}>
 			<Icon name='fas fa-lock' style={styles.icon} accessibilityLabel={_('Locked note')} />
 			{renderForm()}
-			{!!props.onCancel && (
-				<View style={styles.cancelButtonContainer}>
-					<Button title={_('Cancel')} onPress={props.onCancel} color={theme.colorFaded} />
-				</View>
-			)}
 		</View>
 	);
 };
