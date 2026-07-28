@@ -224,6 +224,9 @@ const NoteRevisionViewerComponent: React.FC<Props> = ({ themeId, noteId, onBack,
 		);
 	}
 
+	const revisionLocked = isNoteLockEnabled() && revisions.some(r => r.id === currentRevId && !!r.is_locked);
+	const showLockPanel = revisionLocked && (!canDecrypt || decryptFailed);
+
 	const restoreButtonTitle = _('Restore');
 	const deleteHistoryButtonTitle = _('Delete history');
 	const helpMessage = getHelpMessage(restoreButtonTitle);
@@ -237,18 +240,15 @@ const NoteRevisionViewerComponent: React.FC<Props> = ({ themeId, noteId, onBack,
 			<select disabled={!revisions.length} value={currentRevId} className='revisions' style={theme.dropdownList} onChange={revisionList_onChange} ref={revisionListRef}>
 				{revisionListItems}
 			</select>
-			<button disabled={!revisions.length || restoring} onClick={importButton_onClick} className='restore'style={{ ...theme.buttonStyle, marginLeft: 10, height: theme.inputStyle.height }}>
+			<button disabled={!revisions.length || restoring || showLockPanel} onClick={importButton_onClick} className='restore'style={{ ...theme.buttonStyle, marginLeft: 10, height: theme.inputStyle.height }}>
 				{restoreButtonTitle}
 			</button>
-			<button disabled={!revisions.length || deleting} onClick={deleteHistoryButton_onClick} className='deleteHistory'style={{ ...theme.buttonStyle, marginLeft: 10, height: theme.inputStyle.height }}>
+			<button disabled={!revisions.length || deleting || showLockPanel} onClick={deleteHistoryButton_onClick} className='deleteHistory'style={{ ...theme.buttonStyle, marginLeft: 10, height: theme.inputStyle.height }}>
 				{deleteHistoryButtonTitle}
 			</button>
 			<HelpButton tip={helpMessage} id="noteRevisionHelpButton" onClick={helpButton_onClick} />
 		</div>
 	);
-
-	const revisionLocked = isNoteLockEnabled() && revisions.some(r => r.id === currentRevId && !!r.is_locked);
-	const showLockPanel = revisionLocked && (!canDecrypt || decryptFailed);
 
 	// The viewer stays mounted while the lock panel shows because its dom-ready event loads the revision list.
 	const viewer = <NoteTextViewer themeId={themeId} viewerStyle={{ display: showLockPanel ? 'none' : 'flex', flex: 1, borderLeft: 'none' }} ref={viewerRef} onDomReady={viewer_domReady} onIpcMessage={webview_ipcMessage} />;
