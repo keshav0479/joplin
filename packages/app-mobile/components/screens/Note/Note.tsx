@@ -165,6 +165,7 @@ interface State {
 	noteLastLoadTime: number;
 	noteLockKey: DecryptedNoteLockKey|null;
 	noteLockUnlockPromptVisible: boolean;
+	todoCheckboxKey: number;
 
 	undoRedoButtonState: {
 		canUndo: boolean;
@@ -239,6 +240,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			noteLastLoadTime: Date.now(),
 			noteLockKey: null,
 			noteLockUnlockPromptVisible: false,
+			todoCheckboxKey: 0,
 
 			undoRedoButtonState: {
 				canUndo: false,
@@ -892,9 +894,8 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	private enableNoteEncryption_onPress = () => {
 		if (!NoteLockKey.instance().load()) {
 			this.props.dialogs.prompt(_('Enable encryption'), _('Encrypting a note requires a note lock password, which has not been set yet. Set it up now?'), [
-				// Dead route until the mobile note lock config section PR is merged.
-				{ text: _('OK'), onPress: () => void NavService.go('Config', { sectionName: 'noteLock' }) },
-				{ text: _('Cancel'), style: 'cancel' },
+				{ text: _('No'), style: 'cancel' },
+				{ text: _('Yes'), onPress: () => void NavService.go('Config', { sectionName: 'noteLock' }) },
 			]);
 			return;
 		}
@@ -1512,7 +1513,12 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 				output.push({
 					title: _('Lock encrypted notes'),
 					onPress: () => {
-						NoteLockSession.instance().lock();
+						void (async () => {
+							// Lock only after the queue drains, so a pending save cannot leave the note
+							// visible because it still counted as modified.
+							await this.saveActionQueue(this.state.note.id).processAllNow();
+							NoteLockSession.instance().lock();
+						})();
 					},
 					disabled: !this.props.noteLockSessionUnlocked,
 				});
@@ -1585,6 +1591,12 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	}
 
 	private async todoCheckbox_change(checked: boolean) {
+		if (isNoteLockEnabled() && NoteLockNote.isLocked(this.state.note) && !this.props.noteLockSessionUnlocked) {
+			// The checkbox keeps its own checked state, so a remount reverts the tick.
+			this.setState(state => ({ todoCheckboxKey: state.todoCheckboxKey + 1 }));
+			await this.props.dialogs.error(_('Cannot change a locked note while the session is locked'));
+			return;
+		}
 		await this.saveOneProperty('todo_completed', checked ? time.unixMs() : 0);
 	}
 
@@ -1941,7 +1953,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 					updateState={textWrapCalculator_updateState}
 					readOnly={false}
 				/>
-				{isTodo && <Checkbox style={this.styles().checkbox} checked={!!Number(note.todo_completed)} onChange={this.todoCheckbox_change} />}
+				{isTodo && <Checkbox key={this.state.todoCheckboxKey} style={this.styles().checkbox} checked={!!Number(note.todo_completed)} onChange={this.todoCheckbox_change} />}
 				<TextInput
 					key={this.state.multiline ? 'multiLine' : 'singleLine'}
 					ref={this.titleTextFieldRef}

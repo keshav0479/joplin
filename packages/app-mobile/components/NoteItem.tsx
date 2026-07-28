@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useContext, useMemo, useState } from 'react';
 import { connect } from 'react-redux';
-import { Text, StyleSheet, TextStyle, ViewStyle, AccessibilityInfo, View } from 'react-native';
+import { Text, StyleSheet, TextStyle, View, ViewStyle, AccessibilityInfo } from 'react-native';
 import Checkbox from './Checkbox';
 import Note from '@joplin/lib/models/Note';
 import time from '@joplin/lib/time';
@@ -16,6 +16,7 @@ import { escapeRegExp } from '@joplin/lib/string-utils';
 import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import NoteLockNote from '@joplin/lib/services/noteLock/NoteLockNote';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import { DialogContext } from './DialogManager';
 import Icon from './Icon';
 
 interface Props {
@@ -32,13 +33,14 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 	return useMemo(() => {
 		const theme = themeStyle(themeId);
 
-		const listItem: ViewStyle = {
+		const listItemDivider: ViewStyle = {
 			borderTopWidth: showTopBorder ? 1 : 0,
 			borderTopColor: theme.dividerColor,
 			marginLeft: theme.marginLeft,
 			marginRight: theme.marginRight,
-			paddingTop: theme.marginTop,
-			paddingBottom: theme.marginBottom,
+		};
+
+		const selectionWrapper: ViewStyle = {
 			flexDirection: 'row',
 			// backgroundColor: theme.backgroundColor,
 		};
@@ -47,6 +49,8 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 			flexGrow: 1,
 			flexShrink: 1,
 			alignSelf: 'stretch',
+			paddingTop: theme.marginTop,
+			paddingBottom: theme.marginBottom,
 		};
 		const listItemPressableWithCheckbox: ViewStyle = {
 			...listItemPressable,
@@ -54,6 +58,8 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 		};
 		const listItemPressableWithoutCheckbox: ViewStyle = {
 			...listItemPressable,
+			paddingLeft: theme.marginLeft,
+			paddingRight: theme.marginRight,
 		};
 
 		const listItemText: TextStyle = {
@@ -64,13 +70,15 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 
 		const listItemTextWithCheckbox = { ...listItemText };
 
-		const selectionWrapper: ViewStyle = { };
-
 		const selectionWrapperSelected = { ...selectionWrapper };
 		selectionWrapperSelected.backgroundColor = theme.selectedColor;
+		selectionWrapperSelected.borderColor = theme.selectedColor;
+		selectionWrapperSelected.borderTopWidth = 1;
+		selectionWrapperSelected.borderBottomWidth = 1;
+		selectionWrapperSelected.marginVertical = -1;
 
 		return StyleSheet.create({
-			listItem,
+			listItemDivider,
 			listItemText,
 			titleRow: {
 				flexDirection: 'row',
@@ -92,6 +100,7 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 			selectionWrapperSelected,
 			checkboxStyle: {
 				color: theme.color,
+				paddingLeft: theme.marginLeft,
 				paddingRight: 10,
 			},
 			checkedOpacityStyle: {
@@ -104,6 +113,8 @@ const useStyles = (themeId: number, showTopBorder: boolean) => {
 
 const NoteItemComponent: React.FC<Props> = memo(props => {
 	const styles = useStyles(props.themeId, props.index !== 0);
+	const dialogs = useContext(DialogContext);
+	const [checkboxKey, setCheckboxKey] = useState(0);
 
 	const todoCheckbox_change = useCallback(async (checked: boolean) => {
 		if (!props.note) return;
@@ -112,7 +123,10 @@ const NoteItemComponent: React.FC<Props> = memo(props => {
 		if (isNoteLockEnabled()) {
 			const lockState = await Note.load(props.note.id, { fields: ['is_locked'] });
 			if (NoteLockNote.isLocked(lockState) && !NoteLockSession.instance().isUnlocked()) {
-				throw new Error('Cannot change a locked note while the session is locked');
+				// The checkbox keeps its own checked state, so a remount reverts the tick.
+				setCheckboxKey(key => key + 1);
+				await dialogs.error(_('Cannot change a locked note while the session is locked'));
+				return;
 			}
 		}
 
@@ -123,7 +137,7 @@ const NoteItemComponent: React.FC<Props> = memo(props => {
 		await Note.save(newNote);
 
 		props.dispatch({ type: 'NOTE_SORT' });
-	}, [props.note, props.dispatch]);
+	}, [props.note, props.dispatch, dialogs]);
 
 	const onPress = useCallback(() => {
 		if (!props.note) return;
@@ -177,6 +191,7 @@ const NoteItemComponent: React.FC<Props> = memo(props => {
 	const onLongPressProps = useOnLongPressProps({ onLongPress, actionDescription: selectDeselectLabel });
 
 	const todoCheckbox = isTodo ? <Checkbox
+		key={checkboxKey}
 		style={checkboxStyle}
 		checked={checkboxChecked}
 		onChange={todoCheckbox_change}
@@ -193,21 +208,24 @@ const NoteItemComponent: React.FC<Props> = memo(props => {
 		...onLongPressProps,
 	};
 	return (
-		<MultiTouchableOpacity
-			{...pressableProps}
-			containerProps={{
-				style: [selectionWrapperStyle, opacityStyle, styles.listItem],
-			}}
-			onPress={onPress}
-			beforePressable={todoCheckbox}
-		>
-			{isNoteLockEnabled() ? (
-				<View style={styles.titleRow}>
-					{!!note.is_locked && <Icon name='fas fa-lock' style={styles.lockIcon} accessibilityLabel={_('Locked')} />}
-					{titleElement}
-				</View>
-			) : titleElement}
-		</MultiTouchableOpacity>
+		<View style={opacityStyle}>
+			<View style={styles.listItemDivider}/>
+			<MultiTouchableOpacity
+				{...pressableProps}
+				containerProps={{
+					style: selectionWrapperStyle,
+				}}
+				onPress={onPress}
+				beforePressable={todoCheckbox}
+			>
+				{isNoteLockEnabled() ? (
+					<View style={styles.titleRow}>
+						{!!note.is_locked && <Icon name='fas fa-lock' style={styles.lockIcon} accessibilityLabel={_('Locked')} />}
+						{titleElement}
+					</View>
+				) : titleElement}
+			</MultiTouchableOpacity>
+		</View>
 	);
 });
 

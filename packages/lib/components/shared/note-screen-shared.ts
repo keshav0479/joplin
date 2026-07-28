@@ -104,7 +104,7 @@ interface Shared {
 	installResourceHandling?: (refreshResourceHandler: ResourceHandler)=> void;
 	uninstallResourceHandling?: (refreshResourceHandler: ResourceHandler)=> void;
 
-	reloadNote?: (comp: BaseNoteScreenComponent)=> Promise<NoteEntity>;
+	reloadNote?: (comp: BaseNoteScreenComponent, useDefaultEditorState?: boolean)=> Promise<NoteEntity>;
 }
 
 const shared: Shared = {};
@@ -353,10 +353,13 @@ shared.isModified = function(comp: BaseNoteScreenComponent) {
 	if (!comp.state.note || !comp.state.lastSavedNote) return false;
 	const diff = BaseModel.diffObjects(comp.state.lastSavedNote, comp.state.note);
 	delete diff.type_;
+	// The decrypted-state marker is screen bookkeeping, not a user change, and saves can
+	// stamp it onto only one side of the comparison.
+	if (isNoteLockEnabled()) delete diff.isDecrypted;
 	return !!Object.getOwnPropertyNames(diff).length;
 };
 
-shared.reloadNote = async (comp: BaseNoteScreenComponent) => {
+shared.reloadNote = async (comp: BaseNoteScreenComponent, useDefaultEditorState = false) => {
 	const isProvisionalNote = comp.props.provisionalNoteIds.includes(comp.props.noteId);
 
 	let note: NoteEntity;
@@ -376,14 +379,17 @@ shared.reloadNote = async (comp: BaseNoteScreenComponent) => {
 	} else {
 		note = await Note.load(comp.props.noteId);
 	}
+	let mode = comp.state.mode;
 
-	const panes = comp.props.noteVisiblePanes;
-	let mode = panes.includes('editor') ? 'edit' : 'view';
+	if (useDefaultEditorState) {
+		const panes = comp.props.noteVisiblePanes;
+		mode = panes.includes('editor') ? 'edit' : 'view';
 
-	// Override the mode if the default state is not last
-	const defaultState = Setting.value('editor.mobile.defaultEditState');
-	if (defaultState === 'view') mode = 'view';
-	if (defaultState === 'edit') mode = 'edit';
+		// Override the mode if the default state is not last
+		const defaultState = Setting.value('editor.mobile.defaultEditState');
+		if (defaultState === 'view') mode = 'view';
+		if (defaultState === 'edit') mode = 'edit';
+	}
 
 	// Prevent trashed notes and notes created via sharing from opening in edit mode.
 	if (note?.deleted_time || comp.props.sharedData || noteLockBlocked) {
@@ -433,7 +439,7 @@ shared.reloadNote = async (comp: BaseNoteScreenComponent) => {
 };
 
 shared.initState = async function(comp: BaseNoteScreenComponent) {
-	const note = await shared.reloadNote(comp);
+	const note = await shared.reloadNote(comp, true);
 
 	// Ensure that only empty notes created for shared content are populated with sharedData, because in some cases
 	// existing notes can be overwritten by the shared data. See https://github.com/laurent22/joplin/issues/11479
