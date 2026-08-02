@@ -94,7 +94,7 @@ describe('RevisionService.noteLock', () => {
 		}
 	});
 
-	it('should diff the first unencrypted revision against the encrypted one after disabling', async () => {
+	it('should start a fresh revision chain for the first unencrypted revision after disabling', async () => {
 		const note = await createLockedNoteWithHistory();
 
 		await disableNoteLock(note.id);
@@ -104,7 +104,7 @@ describe('RevisionService.noteLock', () => {
 		expect(revisions.length).toBe(2);
 		expect(revisions[0].is_locked).toBe(1);
 		expect(revisions[1].is_locked).toBe(0);
-		expect(revisions[1].parent_id).toBe(revisions[0].id);
+		expect(revisions[1].parent_id).toBe('');
 
 		const revNote = await revisionService().revisionNote(revisions, 1);
 		expect(revNote.body).toBe('secret v2');

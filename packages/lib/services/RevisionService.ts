@@ -100,7 +100,7 @@ export default class RevisionService extends BaseService {
 				output.title_diff = Revision.createTextPatch('', noteTitle);
 				output.body_diff = Revision.createTextPatch('', noteBody);
 				output.metadata_diff = Revision.createObjectPatch({}, noteMd);
-			} else if (!parentRev) {
+			} else if (!parentRev || (!!parentRev.is_locked && !note.is_locked)) {
 				output.title_diff = Revision.createTextPatch('', noteTitle);
 				output.body_diff = Revision.createTextPatch('', noteBody);
 				output.metadata_diff = Revision.createObjectPatch({}, noteMd);
