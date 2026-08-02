@@ -8,6 +8,9 @@ export interface DecryptedNoteLockKey {
 	plainText: string;
 }
 
+// Importers that predate note lock skip this file, since they only read .md files.
+export const noteLockKeyFileName = 'note_lock_key.json';
+
 export default class NoteLockKey {
 
 	public static instance_: NoteLockKey = null;

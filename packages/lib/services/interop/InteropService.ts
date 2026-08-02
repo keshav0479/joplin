@@ -8,6 +8,8 @@ import Folder from '../../models/Folder';
 import NoteTag from '../../models/NoteTag';
 import Note from '../../models/Note';
 import * as ArrayUtils from '../../ArrayUtils';
+import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
+import NoteLockNote from '../noteLock/NoteLockNote';
 import InteropService_Importer_Jex from './InteropService_Importer_Jex';
 import InteropService_Importer_Md from './InteropService_Importer_Md';
 import InteropService_Importer_Md_frontmatter from './InteropService_Importer_Md_frontmatter';
@@ -406,7 +408,10 @@ export default class InteropService {
 				await queueExportItem(BaseModel.TYPE_NOTE, note);
 				exportedNoteIds.push(noteId);
 
-				const rids = await Note.linkedResourceIds(note.body);
+				// A locked note's body is ciphertext, so its resource ids come from the extracted list.
+				const rids = isNoteLockEnabled() && NoteLockNote.isLocked(note)
+					? Note.unserializeExtractedResourceIds(note.extracted_resource_ids)
+					: await Note.linkedResourceIds(note.body);
 				resourceIds = resourceIds.concat(rids);
 			}
 		}
