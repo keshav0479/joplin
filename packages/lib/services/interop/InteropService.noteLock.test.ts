@@ -73,6 +73,48 @@ describe('InteropService.noteLock', () => {
 		expect(await fs.pathExists(`${extractDir}/${noteLockKeyFileName}`)).toBe(true);
 	});
 
+	it('should md export a locked note decrypted once the session is unlocked', async () => {
+		await setUpUnlockedSession();
+		const folder = await Folder.save({ title: 'folder' });
+		const note = await Note.save({ title: 'locked note', body: 'secret text', parent_id: folder.id });
+		await lockNote(note.id);
+
+		const result = await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Markdown });
+
+		const files = await fs.readdir(`${exportDir()}/folder`);
+		expect(files.length).toBe(1);
+		const exported = await fs.readFile(`${exportDir()}/folder/${files[0]}`, 'utf-8');
+		expect(exported).toContain('secret text');
+		expect(result.lockedNotesSkipped).toBeUndefined();
+		// The database row stays encrypted, only the exported copy is decrypted.
+		expect((await Note.load(note.id)).body).not.toContain('secret');
+	});
+
+	it('should skip and count locked notes when the session is locked', async () => {
+		await setUpUnlockedSession();
+		const folder = await Folder.save({ title: 'folder' });
+		await Note.save({ title: 'plain', body: 'plain text', parent_id: folder.id });
+		const locked = await Note.save({ title: 'locked', body: 'secret', parent_id: folder.id });
+		await lockNote(locked.id);
+		NoteLockSession.instance().lock();
+
+		const result = await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Markdown });
+
+		expect(result.lockedNotesSkipped).toBe(1);
+		expect(result.warnings.length).toBe(1);
+		expect(await fs.readdir(`${exportDir()}/folder`)).toEqual(['plain.md']);
+	});
+
+	it('should skip a locked note whose content cannot be decrypted', async () => {
+		await setUpUnlockedSession();
+		const folder = await Folder.save({ title: 'folder' });
+		await Note.save({ title: 'broken', body: 'not ciphertext', parent_id: folder.id, is_locked: 1 });
+
+		const result = await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Markdown });
+
+		expect(result.lockedNotesSkipped).toBe(1);
+	});
+
 	it.each([
 		{ label: 'no note is locked', flagEnabled: true, isLocked: 0 },
 		{ label: 'note lock is disabled', flagEnabled: false, isLocked: 1 },
