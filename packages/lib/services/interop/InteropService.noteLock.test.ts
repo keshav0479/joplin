@@ -7,6 +7,7 @@ import EncryptionService from '../e2ee/EncryptionService';
 import NoteLockKey, { noteLockKeyFileName } from '../noteLock/NoteLockKey';
 import NoteLockService from '../noteLock/NoteLockService';
 import NoteLockSession from '../noteLock/NoteLockSession';
+import Resource from '../../models/Resource';
 import { createNoteAndResource, encryptionService, exportDir, setupDatabaseAndSynchronizer, switchClient } from '../../testing/test-utils';
 import shim from '../../shim';
 import * as fs from 'fs-extra';
@@ -20,6 +21,12 @@ const lockNote = async (id: string) => {
 	const lockedNote = { ...(await Note.load(id)), is_locked: 1, isDecrypted: true };
 	await Note.save(lockedNote, { useNoteLock: true });
 	return Note.load(id);
+};
+
+const rotateProfileKey = async (newPassword: string) => {
+	NoteLockSession.instance().lock();
+	await NoteLockKey.instance().reset(newPassword);
+	await NoteLockSession.instance().unlock(newPassword);
 };
 
 describe('InteropService.noteLock', () => {
@@ -126,6 +133,84 @@ describe('InteropService.noteLock', () => {
 		await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Raw });
 
 		expect(await fs.pathExists(`${exportDir()}/${noteLockKeyFileName}`)).toBe(false);
+	});
+
+	it('should import a backup from the same profile with locked notes unchanged', async () => {
+		await setUpUnlockedSession();
+		const folder = await Folder.save({ title: 'folder' });
+		const { note, resource } = await createNoteAndResource({ parentId: folder.id });
+		await Note.save({ id: note.id, title: 'note', body: `secret ${note.body}` });
+		await lockNote(note.id);
+		await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Raw });
+
+		await InteropService.instance().import({ path: exportDir(), format: 'raw' });
+
+		const imported = (await Note.all()).find(n => n.id !== note.id && !!n.is_locked);
+		expect(imported.body).not.toContain('secret');
+		expect((await Note.load(imported.id, { useNoteLock: true })).body).toContain('secret');
+
+		// The extracted list follows the remapped resource id, so the resource stays associated.
+		const importedResourceIds = Note.unserializeExtractedResourceIds(imported.extracted_resource_ids);
+		expect(importedResourceIds.length).toBe(1);
+		expect(importedResourceIds[0]).not.toBe(resource.id);
+		expect(!!(await Resource.load(importedResourceIds[0]))).toBe(true);
+	});
+
+	it('should re-encrypt imported locked notes for this profile through the key handler', async () => {
+		await setUpUnlockedSession('old password');
+		const folder = await Folder.save({ title: 'folder' });
+		const note = await Note.save({ title: 'note', body: 'secret old', parent_id: folder.id });
+		await lockNote(note.id);
+		await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Raw });
+
+		await rotateProfileKey('new password');
+
+		const result = await InteropService.instance().import({
+			path: exportDir(),
+			format: 'raw',
+			onNoteLockKey: keyFile => NoteLockKey.instance().decrypt('old password', keyFile),
+		});
+
+		const imported = (await Note.all()).find(n => n.id !== note.id && !!n.is_locked);
+		expect(imported.body).not.toContain('secret');
+		expect((await Note.load(imported.id, { useNoteLock: true })).body).toBe('secret old');
+		expect(result.warnings.length).toBe(0);
+	});
+
+	it('should import foreign locked notes unchanged when no key handler is provided', async () => {
+		await setUpUnlockedSession('old password');
+		const folder = await Folder.save({ title: 'folder' });
+		const note = await Note.save({ title: 'note', body: 'secret old', parent_id: folder.id });
+		await lockNote(note.id);
+		await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Raw });
+
+		await rotateProfileKey('new password');
+
+		await InteropService.instance().import({ path: exportDir(), format: 'raw' });
+
+		const imported = (await Note.all()).find(n => n.id !== note.id && !!n.is_locked);
+		expect(imported.body).not.toContain('secret');
+		await expect(Note.load(imported.id, { useNoteLock: true })).rejects.toThrow();
+	});
+
+	it('should keep locked notes unchanged and warn when the provided key does not fit', async () => {
+		await setUpUnlockedSession('old password');
+		const folder = await Folder.save({ title: 'folder' });
+		const note = await Note.save({ title: 'note', body: 'secret old', parent_id: folder.id });
+		await lockNote(note.id);
+		await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Raw });
+
+		await rotateProfileKey('new password');
+
+		const result = await InteropService.instance().import({
+			path: exportDir(),
+			format: 'raw',
+			onNoteLockKey: async keyFile => ({ id: keyFile.id, plainText: 'not the key' }),
+		});
+
+		const imported = (await Note.all()).find(n => n.id !== note.id && !!n.is_locked);
+		expect(imported.body).not.toContain('secret');
+		expect(result.warnings.some(w => w.includes('could not be decrypted'))).toBe(true);
 	});
 
 });
