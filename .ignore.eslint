@@ -1765,6 +1765,8 @@ packages/lib/services/noteLock/NoteLockService.test.js
 packages/lib/services/noteLock/NoteLockService.js
 packages/lib/services/noteLock/NoteLockSession.test.js
 packages/lib/services/noteLock/NoteLockSession.js
+packages/lib/services/noteLock/bulkSetNoteLockState.test.js
+packages/lib/services/noteLock/bulkSetNoteLockState.js
 packages/lib/services/noteLock/hasLockedNoteWhileSessionLocked.js
 packages/lib/services/noteLock/isNoteLockEnabled.js
 packages/lib/services/noteLock/setNoteLockState.test.js
