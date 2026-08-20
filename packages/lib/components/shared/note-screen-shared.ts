@@ -45,6 +45,8 @@ export type AttachedResources = Record<string, AttachedResource>;
 
 export interface SaveNoteOptions {
 	autoTitle?: boolean;
+	editorNoteReloadTimeRequest?: number;
+	getEditorNoteReloadTimeRequest?: ()=> number;
 }
 
 export interface BaseState {
@@ -61,6 +63,7 @@ export interface BaseState {
 	// Captured with a locked note's plaintext so pending saves can re-encrypt even after the
 	// session locks. Optional because only the mobile note screen populates it.
 	noteLockKey?: DecryptedNoteLockKey|null;
+	noteLockUndecryptable?: boolean;
 }
 
 export interface AttachFileAsset {
@@ -130,14 +133,9 @@ shared.handleNoteDeletedWhileEditing_ = async (note: NoteEntity, noteLockKey: De
 
 	// The gated save keeps a locked note's plaintext body out of the database, and the gated
 	// load populates the decrypted-state marker on the recreated note.
-	if (isNoteLockEnabled()) {
-		newNote = await Note.save(newNote, { useNoteLock: true, noteLockKey });
-		return Note.load(newNote.id, { useNoteLock: true });
-	}
+	newNote = await Note.save(newNote, { useNoteLock: true, noteLockKey });
 
-	newNote = await Note.save(newNote);
-
-	return Note.load(newNote.id);
+	return Note.load(newNote.id, { useNoteLock: true });
 };
 
 shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, state: BaseState, folderId: string = null, options: SaveNoteOptions = null) {
@@ -193,6 +191,17 @@ shared.saveNoteButton_press = async function(comp: BaseNoteScreenComponent, stat
 				if (!saveOptions.fields.includes(field)) saveOptions.fields.push(field);
 			}
 		}
+	}
+
+	// This check is intentionally immediately before Note.save. The action may
+	// have been queued, or waiting for the save mutex, when the reload was
+	// requested. In that case its note snapshot is stale and must be discarded.
+	if (
+		options.editorNoteReloadTimeRequest !== undefined &&
+		options.getEditorNoteReloadTimeRequest &&
+		options.getEditorNoteReloadTimeRequest() > options.editorNoteReloadTimeRequest
+	) {
+		return releaseMutex();
 	}
 
 	const savedNote = 'fields' in saveOptions && !saveOptions.fields.length ? { ...note } : await Note.save(note, saveOptions);
@@ -362,22 +371,43 @@ shared.isModified = function(comp: BaseNoteScreenComponent) {
 shared.reloadNote = async (comp: BaseNoteScreenComponent, useDefaultEditorState = false) => {
 	const isProvisionalNote = comp.props.provisionalNoteIds.includes(comp.props.noteId);
 
-	let note: NoteEntity;
+	let note = await Note.load(comp.props.noteId);
+	if (note?.encryption_cipher_text) {
+		try {
+			note = await Note.decrypt(note);
+		} catch (error) {
+			reg.logger().info(`Could not decrypt note ${note.id}, note could not be refreshed:`, error.message);
+			// All decryption errors, including masterKeyNotLoaded, intentionally use the non-existent note branch below.
+			// A forced reload must not retain the previously loaded plaintext, as it presents a risk of data loss if the
+			// user is typing during the reload. Aside from certain edge cases, a user cannot directly open a note which
+			// is still encrypted, so normally would not see this.
+			note = null;
+		}
+	}
+
+	// The sync E2EE decryption above saves the real row back, so the gated load below reads
+	// note lock ciphertext, never sync ciphertext.
 	let noteLockKey: DecryptedNoteLockKey|null = null;
 	let noteLockBlocked = false;
-	if (isNoteLockEnabled()) {
-		const lockState = await Note.load(comp.props.noteId, { fields: ['is_locked'] });
-		if (NoteLockNote.isLocked(lockState) && NoteLockSession.instance().isUnlocked()) {
-			note = await Note.load(comp.props.noteId, { useNoteLock: true });
-			noteLockKey = NoteLockSession.instance().decryptedKey();
+	let noteLockUndecryptable = false;
+	if (isNoteLockEnabled() && note && NoteLockNote.isLocked(note)) {
+		if (NoteLockSession.instance().isUnlocked()) {
+			try {
+				note = await Note.load(comp.props.noteId, { useNoteLock: true });
+				noteLockKey = NoteLockSession.instance().decryptedKey();
+			} catch (error) {
+				// A mid-load session lock throws the same way, so only a still-unlocked session
+				// means the note itself was encrypted with a different key.
+				reg.logger().warn('Could not load locked note:', comp.props.noteId, error);
+				noteLockUndecryptable = NoteLockSession.instance().isUnlocked();
+				// The encrypted row is reloaded so note and lastSavedNote match: a diff-based
+				// save cannot write the body, and the screen hides it from the editor.
+				note = await Note.load(comp.props.noteId);
+				noteLockBlocked = true;
+			}
 		} else {
-			// While blocked, note and lastSavedNote both carry the encrypted body, so a
-			// diff-based save cannot write it, and the note screen hides it from the editor.
-			note = await Note.load(comp.props.noteId);
-			noteLockBlocked = NoteLockNote.isLocked(lockState);
+			noteLockBlocked = true;
 		}
-	} else {
-		note = await Note.load(comp.props.noteId);
 	}
 	let mode = comp.state.mode;
 
@@ -418,6 +448,7 @@ shared.reloadNote = async (comp: BaseNoteScreenComponent, useDefaultEditorState 
 			readOnly: noteLockBlocked || itemIsReadOnlySync(ModelType.Note, ItemChange.SOURCE_UNSPECIFIED, note as ItemSlice, Setting.value('sync.userId'), BaseItem.syncShareCache),
 			noteLastLoadTime: Date.now(),
 			noteLockKey,
+			noteLockUndecryptable,
 		});
 	} else {
 		// Handle the case where a non-existent note is loaded. This can happen briefly after deleting a note.
@@ -432,6 +463,7 @@ shared.reloadNote = async (comp: BaseNoteScreenComponent, useDefaultEditorState 
 			readOnly: true,
 			noteLastLoadTime: Date.now(),
 			noteLockKey: null,
+			noteLockUndecryptable: false,
 		});
 	}
 

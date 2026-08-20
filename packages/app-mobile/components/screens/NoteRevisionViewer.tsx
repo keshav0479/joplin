@@ -7,7 +7,7 @@ import Revision from '@joplin/lib/models/Revision';
 import BaseModel, { ModelType } from '@joplin/lib/BaseModel';
 import { IconButton, Text } from 'react-native-paper';
 import Dropdown from '../Dropdown';
-import ScreenHeader, { MenuOptionType } from '../ScreenHeader';
+import ScreenHeader, { MenuOption } from '../ScreenHeader';
 import { formatMsToLocal } from '@joplin/utils/time';
 import { useCallback, useContext, useMemo, useState } from 'react';
 import { PrimaryButton } from '../buttons';
@@ -24,7 +24,7 @@ import { DialogContext } from '../DialogManager';
 import useDeleteHistoryClick from '@joplin/lib/components/shared/NoteRevisionViewer/useDeleteHistoryClick';
 import { OnScrollCallback } from '../NoteBodyViewer/types';
 import TextWrapCalculator from './Notes/TextWrapCalculator';
-import { MenuOptionStyle } from '../ScreenHeader/Menu';
+import { MenuOptionStyle } from '../BottomDrawerMenu';
 import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import NoteLockService from '@joplin/lib/services/noteLock/NoteLockService';
 import NoteLockKey from '@joplin/lib/services/noteLock/NoteLockKey';
@@ -228,7 +228,7 @@ const NoteRevisionViewer: React.FC<Props> = props => {
 
 	const disableDeleteHistory = deleting || !hasRevisions || showLockPanel;
 	const menuOptions = useMemo(() => {
-		const output: MenuOptionType[] = [{
+		const output: MenuOption[] = [{
 			title: _('Delete history'),
 			icon: 'material delete-outline',
 			style: MenuOptionStyle.Destructive,

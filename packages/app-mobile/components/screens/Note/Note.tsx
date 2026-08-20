@@ -22,7 +22,7 @@ import NavService, { OnNavigateCallback as OnNavigateCallback } from '@joplin/li
 import { ModelType } from '@joplin/lib/BaseModel';
 import { fileExtension, safeFileExtension } from '@joplin/lib/path-utils';
 import * as mimeUtils from '@joplin/lib/mime-utils';
-import ScreenHeader, { FolderPickerOptions, MenuOptionType, ViewToggleButtonMode } from '../../ScreenHeader';
+import ScreenHeader, { FolderPickerOptions, MenuOption, ViewToggleButtonMode } from '../../ScreenHeader';
 import NoteTagsDialog from '../NoteTagsDialog';
 import time from '@joplin/lib/time';
 import Checkbox from '../../Checkbox';
@@ -57,7 +57,7 @@ import restoreItems from '@joplin/lib/services/trash/restoreItems';
 import { getDisplayParentTitle } from '@joplin/lib/services/trash';
 import { PluginHtmlContents, PluginStates, utils as pluginUtils } from '@joplin/lib/services/plugins/reducer';
 import debounce from '../../../utils/debounce';
-import { focus } from '@joplin/lib/utils/focusHandler';
+import { blur, focus } from '@joplin/lib/utils/focusHandler';
 import CommandService, { RegisteredRuntime } from '@joplin/lib/services/CommandService';
 import { ResourceInfo } from '../../NoteBodyViewer/hooks/useRerenderHandler';
 import getImageDimensions from '../../../utils/image/getImageDimensions';
@@ -77,7 +77,7 @@ import SpeechToTextBanner from '../../voiceTyping/SpeechToTextBanner';
 import CameraView from '../../CameraView/CameraView';
 import ShareNoteDialog from '../ShareNoteDialog';
 import stateToWhenClauseContext from '../../../services/commands/stateToWhenClauseContext';
-import { defaultWindowId } from '@joplin/lib/reducer';
+import { defaultWindowId, HighlightedWord } from '@joplin/lib/reducer';
 import useVisiblePluginEditorViewIds from '@joplin/lib/hooks/plugins/useVisiblePluginEditorViewIds';
 import { SelectionRange } from '../../../contentScripts/markdownEditorBundle/types';
 import { EditorType } from '../../NoteEditor/types';
@@ -92,7 +92,7 @@ import { Second } from '@joplin/utils/time';
 import TextWrapCalculator from '../Notes/TextWrapCalculator';
 import SearchEngine from '@joplin/lib/services/search/SearchEngine';
 import { ALL_NOTES_FILTER_ID } from '@joplin/lib/reserved-ids';
-import { MenuOptionButton, MenuOptionStyle } from '../../ScreenHeader/Menu';
+import { MenuOptionStyle, MenuOptionButton } from '../../BottomDrawerMenu';
 
 const emptyArray: never[] = [];
 
@@ -125,7 +125,7 @@ interface Props extends BaseProps {
 	showSideMenu: boolean;
 	searchQuery: string;
 	ftsEnabled: number;
-	highlightedWords: string[];
+	highlightedWords: HighlightedWord[];
 	noteHash: string;
 	toolbarEnabled: boolean;
 	pluginHtmlContents: PluginHtmlContents;
@@ -164,8 +164,10 @@ interface State {
 	newAndNoTitleChangeNoteId: boolean|null;
 	noteLastLoadTime: number;
 	noteLockKey: DecryptedNoteLockKey|null;
+	noteLockUndecryptable: boolean;
 	noteLockUnlockPromptVisible: boolean;
 	todoCheckboxKey: number;
+	reloadInProgress: boolean;
 
 	undoRedoButtonState: {
 		canUndo: boolean;
@@ -196,7 +198,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	private noteTagDialog_closeRequested: ()=> void;
 	private refreshResource: (resource: ResourceEntity, noteBody?: string)=> Promise<void>;
 	private selection: SelectionRange;
-	private menuOptionsCache_: Record<string, MenuOptionType[]>;
+	private menuOptionsCache_: Record<string, MenuOption[]>;
 	private focusUpdateIID_: ReturnType<typeof setTimeout> | null;
 	private folderPickerOptions_: FolderPickerOptions;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- dialogbox is the react-native-dialogbox ref; the library ships no types
@@ -206,6 +208,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		return shared.noteComponent_change(this, 'body', saveEvent.body);
 	});
 	private refreshKey: number | undefined;
+	private reloadInProgress_ = false;
 
 	public static navigationOptions(): { header: null } {
 		return { header: null };
@@ -239,8 +242,10 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			newAndNoTitleChangeNoteId: null,
 			noteLastLoadTime: Date.now(),
 			noteLockKey: null,
+			noteLockUndecryptable: false,
 			noteLockUnlockPromptVisible: false,
 			todoCheckboxKey: 0,
+			reloadInProgress: false,
 
 			undoRedoButtonState: {
 				canUndo: false,
@@ -586,6 +591,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 					{
 						buttons: [_('Yes'), _('No')],
 						title: _('Save geolocation?'),
+						cancelId: 1,
 					},
 				);
 				return result === yesIndex;
@@ -659,6 +665,14 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			this.scheduleFocusUpdate();
 		}
 
+		if (isNoteLockEnabled() && prevState.noteLockUndecryptable !== this.state.noteLockUndecryptable) {
+			this.props.dispatch({
+				type: 'SET_ACTIVE_NOTE_IS_UNDECRYPTABLE',
+				value: this.state.noteLockUndecryptable,
+				windowId: this.props.windowId,
+			});
+		}
+
 		if (prevProps.showSideMenu !== this.props.showSideMenu && this.props.showSideMenu) {
 			this.props.dispatch({
 				type: 'NOTE_SIDE_MENU_OPTIONS_SET',
@@ -725,6 +739,11 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			const explicitReloadRequired = !editorPlugin && this.props.editorNoteReloadTimeRequest > this.state.noteLastLoadTime;
 
 			if (explicitReloadRequired) {
+				this.reloadInProgress_ = true;
+				Keyboard.dismiss();
+				this.editorRef.current?.hideKeyboard();
+				blur('Note::reload', this.titleTextFieldRef.current);
+				this.setState({ reloadInProgress: true });
 				void this.reloadNoteAndUpdateRefreshKey();
 			}
 
@@ -788,6 +807,15 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		this.commandRegistration_?.deregister();
 		this.commandRegistration_ = null;
 
+		if (isNoteLockEnabled() && this.state.noteLockUndecryptable) {
+			// The screen remounts per note id, so the next note never dispatches the clear itself.
+			this.props.dispatch({
+				type: 'SET_ACTIVE_NOTE_IS_UNDECRYPTABLE',
+				value: false,
+				windowId: this.props.windowId,
+			});
+		}
+
 		this.props.dispatch({
 			type: 'SET_NOTE_EDITOR_VISIBLE',
 			visible: false,
@@ -796,10 +824,24 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 
 	private async reloadNoteAndUpdateRefreshKey() {
 		await shared.reloadNote(this);
-		this.refreshKey = this.props.editorNoteReloadTimeRequest;
+
+		const refreshKey = this.props.editorNoteReloadTimeRequest;
+		this.refreshKey = refreshKey;
+		if (this.useEditorBeta() && this.state.mode === 'edit') {
+			this.forceUpdate();
+		} else {
+			this.setState({}, () => this.editorReloadComplete(refreshKey));
+		}
 	}
 
+	private editorReloadComplete = (refreshKey: number|undefined) => {
+		if (!this.reloadInProgress_ || refreshKey !== this.props.editorNoteReloadTimeRequest) return;
+		this.reloadInProgress_ = false;
+		this.setState({ reloadInProgress: false });
+	};
+
 	private title_changeText(text: string) {
+		if (this.reloadInProgress_) return;
 		let newText = text;
 		newText = text.replace(/(\r\n|\n|\r)/gm, ' ');
 		shared.noteComponent_change(this, 'title', newText);
@@ -814,6 +856,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	}
 
 	private onPlainEditorTextChange = (text: string) => {
+		if (this.reloadInProgress_) return;
 		if (!this.undoRedoService_.canUndo) {
 			this.undoRedoService_.push(this.undoState());
 		} else {
@@ -827,9 +870,15 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	// and updating this.state.note immediately causes slow rerenders.
 	//
 	// See https://github.com/laurent22/joplin/issues/10130
-	private onMarkdownEditorTextChange = debounce((event: EditorChangeEvent) => {
+	private debouncedMarkdownEditorTextChange_ = debounce((event: EditorChangeEvent, reloadRequest: number) => {
+		if (this.reloadInProgress_ || reloadRequest !== this.props.editorNoteReloadTimeRequest) return;
 		shared.noteComponent_change(this, 'body', event.value);
 	}, 100);
+
+	private onMarkdownEditorTextChange = (event: EditorChangeEvent) => {
+		if (this.reloadInProgress_) return;
+		this.debouncedMarkdownEditorTextChange_(event, this.props.editorNoteReloadTimeRequest);
+	};
 
 	private onPlainEditorSelectionChange = (event: NativeSyntheticEvent<{ selection: SelectionRange }>) => {
 		this.selection = event.nativeEvent.selection;
@@ -843,9 +892,12 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		);
 	};
 
-	public makeSaveAction(state: State) {
+	public makeSaveAction(state: State, editorNoteReloadTimeRequest: number) {
 		return async () => {
-			return shared.saveNoteButton_press(this, state, null, null);
+			return shared.saveNoteButton_press(this, state, null, {
+				editorNoteReloadTimeRequest,
+				getEditorNoteReloadTimeRequest: () => this.props.editorNoteReloadTimeRequest,
+			});
 		};
 	}
 
@@ -857,7 +909,9 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	}
 
 	public scheduleSave(state: State) {
-		this.saveActionQueue(state.note.id).push(this.makeSaveAction(state));
+		if (this.reloadInProgress_) return;
+		const editorNoteReloadTimeRequest = this.props.editorNoteReloadTimeRequest;
+		this.saveActionQueue(state.note.id).push(this.makeSaveAction(state, editorNoteReloadTimeRequest));
 	}
 
 	private async saveNoteButton_press(folderId: string = null) {
@@ -900,6 +954,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			return;
 		}
 		if (!NoteLockSession.instance().isUnlocked()) {
+			// Enabling is completed by enableNoteEncryptionUnlockCallback once the panel unlocks.
 			this.setState({ noteLockUnlockPromptVisible: true });
 			return;
 		}
@@ -910,7 +965,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		void this.setNoteLockState_(false);
 	};
 
-	private noteLockUnlockPrompt_unlocked = () => {
+	private enableNoteEncryptionUnlockCallback = () => {
 		this.setState({ noteLockUnlockPromptVisible: false });
 		void this.setNoteLockState_(true);
 	};
@@ -1376,7 +1431,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 
 		if (this.menuOptionsCache_[cacheKey]) return this.menuOptionsCache_[cacheKey];
 
-		const output: MenuOptionType[] = [];
+		const output: MenuOption[] = [];
 
 		// The file attachment modules only work in Android >= 5 (Version 21)
 		// https://github.com/react-community/react-native-image-picker/issues/606
@@ -1497,6 +1552,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			if (!note.is_locked) {
 				output.push({
 					title: _('Enable encryption'),
+					icon: 'material lock-plus-outline',
 					onPress: () => {
 						this.enableNoteEncryption_onPress();
 					},
@@ -1505,6 +1561,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			} else {
 				output.push({
 					title: _('Disable encryption'),
+					icon: 'material lock-off-outline',
 					onPress: () => {
 						this.disableNoteEncryption_onPress();
 					},
@@ -1512,6 +1569,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 				});
 				output.push({
 					title: _('Lock encrypted notes'),
+					icon: 'material lock-outline',
 					onPress: () => {
 						void (async () => {
 							// Lock only after the queue drains, so a pending save cannot leave the note
@@ -1807,6 +1865,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			bodyComponent = <NoteLockPanel
 				themeId={this.props.themeId}
 				hasNoteLockKey={!!NoteLockKey.instance().load()}
+				undecryptable={this.state.noteLockUndecryptable}
 			/>;
 		} else if (editorView) {
 			bodyComponent = renderPluginEditor();
@@ -1862,6 +1921,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 							keyboardAppearance={theme.keyboardAppearance}
 							placeholder={_('Add body')}
 							placeholderTextColor={theme.colorFaded}
+							editable={!this.state.readOnly && !this.state.reloadInProgress}
 							// need some extra padding for iOS so that the keyboard won't cover last line of the note
 							// see https://github.com/laurent22/joplin/issues/3607
 							// Property is gone as of RN 0.72?
@@ -1887,7 +1947,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 						onSearchVisibleChange={this.onSearchVisibleChange_}
 						onAttach={this.onAttach}
 						noteResources={this.state.noteResources}
-						readOnly={this.state.readOnly}
+						readOnly={this.state.readOnly || this.state.reloadInProgress}
 						plugins={this.props.plugins}
 						style={{
 							...editorStyle,
@@ -1906,6 +1966,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 
 						mode={this.props.editorType}
 						refreshKey={this.refreshKey}
+						onLoadEnd={() => this.editorReloadComplete(this.refreshKey)}
 					/>;
 				}
 			}
@@ -1966,7 +2027,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 					keyboardAppearance={theme.keyboardAppearance}
 					placeholder={_('Add title')}
 					placeholderTextColor={theme.colorFaded}
-					editable={!this.state.readOnly}
+					editable={!this.state.readOnly && !this.state.reloadInProgress}
 					multiline={this.state.multiline}
 					submitBehavior = "blurAndSubmit"
 				/>
@@ -2044,7 +2105,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 						<NoteLockPanel
 							themeId={this.props.themeId}
 							hasNoteLockKey={true}
-							onUnlocked={this.noteLockUnlockPrompt_unlocked}
+							onUnlocked={this.enableNoteEncryptionUnlockCallback}
 						/>
 					</DismissibleDialog>
 				)}

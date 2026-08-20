@@ -8,6 +8,29 @@ import NoteLockService, { ScopedNoteLockService } from '../../services/noteLock/
 import NoteLockSession from '../../services/noteLock/NoteLockSession';
 import { NoteEntity } from '../../services/database/types';
 
+const deferred = <T>() => {
+	let resolve: (value: T)=> void;
+	const promise = new Promise<T>(resolvePromise => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve: resolve! };
+};
+
+const newComponent = () => ({
+	props: {
+		provisionalNoteIds: [],
+		noteId: 'note-id',
+		folders: [],
+		sharedData: undefined,
+		noteVisiblePanes: ['editor'],
+	},
+	state: { mode: 'edit' },
+	setState: jest.fn(),
+	scheduleFocusUpdate: jest.fn(),
+}) as unknown as BaseNoteScreenComponent;
+
+
+
 const makeComp = (note: NoteEntity, stateOverrides: Partial<BaseState> = {}): BaseNoteScreenComponent => {
 	return {
 		props: {
@@ -100,6 +123,33 @@ describe('note-screen-shared', () => {
 		expect(unlockedComp.state.note.body).toBe('secret content');
 		expect(unlockedComp.state.readOnly).toBe(false);
 		expect(unlockedComp.state.noteLockKey).toEqual({ id: 'key-id', plainText: 'key' });
+	});
+
+	it('should report a locked note as undecryptable only when the session is still unlocked', async () => {
+		const testNote = await Note.save({ title: 'Locked', body: 'ciphertext', is_locked: 1, parent_id: folderId });
+
+		jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValue(true);
+		jest.spyOn(NoteLockSession.instance(), 'decryptedKey').mockReturnValue({ id: 'key-id', plainText: 'key' });
+		jest.spyOn(NoteLockNote, 'decryptBody').mockRejectedValue(new Error('OperationError'));
+
+		const undecryptableComp = makeComp(testNote);
+		await shared.reloadNote(undecryptableComp);
+		expect(undecryptableComp.state.noteLockUndecryptable).toBe(true);
+		expect(undecryptableComp.state.note.body).toBe('ciphertext');
+		expect(undecryptableComp.state.readOnly).toBe(true);
+		expect(undecryptableComp.state.noteLockKey).toBeNull();
+
+		// Unlocked when the load starts, locked by the time the key is captured: still recoverable.
+		jest.spyOn(NoteLockSession.instance(), 'isUnlocked').mockReturnValueOnce(true).mockReturnValue(false);
+		jest.spyOn(NoteLockNote, 'decryptBody').mockImplementation(async note => ({ ...note, body: 'secret content' }));
+		jest.spyOn(NoteLockSession.instance(), 'decryptedKey').mockImplementation(() => {
+			throw new Error('Note lock session is locked');
+		});
+
+		const racedComp = makeComp(testNote);
+		await shared.reloadNote(racedComp);
+		expect(racedComp.state.noteLockUndecryptable).toBe(false);
+		expect(racedComp.state.note.body).toBe('ciphertext');
 	});
 
 	it('should persist the encrypted body together with a lock state change', async () => {
@@ -266,5 +316,44 @@ describe('note-screen-shared', () => {
 		const savedNote = await Note.load(testNote.id);
 		expect(savedNote.is_locked).toBe(1);
 		expect(savedNote.body).toBe('enc(edited text)');
+	});
+
+	it('should reload an encrypted note after decrypting it', async () => {
+		jest.spyOn(shared, 'attachedResources').mockResolvedValue({});
+		const encryptedNote = { id: 'note-id', encryption_cipher_text: 'cipher text', deleted_time: 0 };
+		const decryptedNote = { ...encryptedNote, encryption_cipher_text: '', title: 'Title', body: 'Body' };
+		const decryptStarted = deferred<void>();
+		const decryption = deferred<typeof decryptedNote>();
+		jest.spyOn(Note, 'load').mockResolvedValue(encryptedNote as never);
+		jest.spyOn(Note, 'decrypt').mockImplementation(() => {
+			decryptStarted.resolve();
+			return decryption.promise as never;
+		});
+		const component = newComponent();
+
+		const reloadPromise = shared.reloadNote(component);
+		await decryptStarted.promise;
+		expect(component.setState).not.toHaveBeenCalled();
+
+		decryption.resolve(decryptedNote);
+		await reloadPromise;
+
+		expect(component.setState).toHaveBeenCalledWith(expect.objectContaining({ note: decryptedNote }));
+	});
+
+	it.each([
+		['the master key is not loaded', Object.assign(new Error('Master key is not loaded'), { code: 'masterKeyNotLoaded' })],
+		['decryption otherwise fails', new Error('Invalid ciphertext')],
+	])('should use the empty-note branch when %s', async (_description, error) => {
+		jest.spyOn(shared, 'attachedResources').mockResolvedValue({});
+		const encryptedNote = { id: 'note-id', encryption_cipher_text: 'cipher text' };
+		jest.spyOn(Note, 'load').mockResolvedValue(encryptedNote as never);
+		jest.spyOn(Note, 'decrypt').mockRejectedValue(error);
+		const component = newComponent();
+
+		const result = await shared.reloadNote(component);
+
+		expect(result).toBeNull();
+		expect(component.setState).toHaveBeenCalledWith(expect.objectContaining({ note: {}, isLoading: true }));
 	});
 });
