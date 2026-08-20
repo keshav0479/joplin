@@ -10,6 +10,7 @@ import NoteLockKey from '../noteLock/NoteLockKey';
 import NoteLockSession from '../noteLock/NoteLockSession';
 import ItemChange from '../../models/ItemChange';
 import { ModelType } from '../../BaseModel';
+import RevisionService from '../RevisionService';
 
 describe('Synchronizer.revisions', () => {
 
@@ -371,6 +372,46 @@ describe('Synchronizer.revisions', () => {
 		// plaintext revision from it.
 		const itemChange = await ItemChange.itemChange(ModelType.Note, note.id);
 		expect(itemChange?.before_change_item ?? '').not.toContain('secret');
+	}));
+
+	it('should advance the editor reload marker before the incoming lock revision cleanup', (async () => {
+		Setting.setValue('featureFlag.noteLock', true);
+		const note = await Note.save({ title: 'note', body: 'secret v1' });
+		await synchronizerStart();
+
+		await switchClient(2);
+
+		Setting.setValue('featureFlag.noteLock', true);
+		NoteLockSession.destroyInstance();
+		NoteLockKey.destroyInstance();
+		EncryptionService.instance_ = encryptionService();
+		await synchronizerStart();
+		await NoteLockKey.instance().create('123456');
+		await NoteLockSession.instance().unlock('123456');
+		const toSave = { ...await Note.load(note.id), is_locked: 1 };
+		(toSave as Record<string, unknown>).isDecrypted = true;
+		await Note.save(toSave, { useNoteLock: true });
+		await synchronizerStart();
+
+		await switchClient(1);
+
+		Setting.setValue('featureFlag.noteLock', true);
+		// A queued editor save only becomes stale once the reload marker advances, so the
+		// dispatch must fire before the awaited revision cleanup opens a race window.
+		const dispatch = jest.fn();
+		synchronizer().dispatch = dispatch;
+		let dispatchedBeforeCleanup = false;
+		const cleanupSpy = jest.spyOn(RevisionService.instance(), 'deleteUnencryptedHistoryForNote').mockImplementation(async () => {
+			dispatchedBeforeCleanup = dispatch.mock.calls.some(([action]) => action.type === 'EDITOR_NOTE_NEEDS_RELOAD' && action.noteId === note.id);
+		});
+		try {
+			await synchronizerStart();
+			expect(cleanupSpy).toHaveBeenCalled();
+			expect(dispatchedBeforeCleanup).toBe(true);
+		} finally {
+			cleanupSpy.mockRestore();
+			synchronizer().dispatch = () => {};
+		}
 	}));
 
 	it('should not overwrite a customised local ttlDays with another client default', (async () => {
