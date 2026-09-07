@@ -816,6 +816,11 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			});
 		}
 
+		if (this.focusUpdateIID_) {
+			shim.clearInterval(this.focusUpdateIID_);
+			this.focusUpdateIID_ = null;
+		}
+
 		this.props.dispatch({
 			type: 'SET_NOTE_EDITOR_VISIBLE',
 			visible: false,
@@ -941,13 +946,14 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 				await disableNoteLock(this.state.note.id);
 			}
 		} catch (error) {
-			await this.props.dialogs.error(error.message);
+			reg.logger().warn('Could not change the note lock state:', error);
+			await this.props.dialogs.error(_('Could not update the note lock. Please try again.'));
 		}
 	}
 
 	private enableNoteEncryption_onPress = () => {
 		if (!NoteLockKey.instance().load()) {
-			this.props.dialogs.prompt(_('Enable encryption'), _('Encrypting a note requires a note lock password, which has not been set yet. Set it up now?'), [
+			this.props.dialogs.prompt(_('Lock this note'), _('Locking a note requires the note lock password, which has not been set up yet. Set it up now?'), [
 				{ text: _('No'), style: 'cancel' },
 				{ text: _('Yes'), onPress: () => void NavService.go('Config', { sectionName: 'noteLock' }) },
 			]);
@@ -1426,7 +1432,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 
 		const pluginCommands = pluginUtils.commandNamesFromViews(this.props.plugins, 'noteToolbar');
 
-		const cacheKey = md5([isTodo, isSaved, pluginCommands.join(','), readOnly, this.state.mode, isCodeView, note.is_locked, this.props.noteLockSessionUnlocked, !!this.state.noteLockKey].join('_'));
+		const cacheKey = md5([isTodo, isSaved, pluginCommands.join(','), readOnly, this.state.mode, isCodeView, note.is_locked, this.props.noteLockSessionUnlocked, !!this.state.noteLockKey, this.state.noteLockUndecryptable].join('_'));
 		if (!this.menuOptionsCache_) this.menuOptionsCache_ = {};
 
 		if (this.menuOptionsCache_[cacheKey]) return this.menuOptionsCache_[cacheKey];
@@ -1515,7 +1521,9 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		};
 
 		if (isSaved && !isDeleted) {
-			addButtonFromCommand('setTags', { icon: 'material tag-outline' });
+			// The when-clause context lags the local undecryptable state by a render and the menu
+			// is cached, so that one input is patched from the component's own state.
+			addButtonFromCommand('setTags', { icon: 'material tag-outline', disabled: !commandService.isEnabled('setTags', whenContext) || (isNoteLockEnabled() && this.state.noteLockUndecryptable) });
 		}
 
 		output.push({
@@ -1551,7 +1559,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		if (isNoteLockEnabled() && isSaved && !isDeleted && !note.is_conflict) {
 			if (!note.is_locked) {
 				output.push({
-					title: _('Enable encryption'),
+					title: _('Lock this note'),
 					icon: 'material lock-plus-outline',
 					onPress: () => {
 						this.enableNoteEncryption_onPress();
@@ -1560,27 +1568,32 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 				});
 			} else {
 				output.push({
-					title: _('Disable encryption'),
+					title: _('Remove note lock'),
 					icon: 'material lock-off-outline',
 					onPress: () => {
 						this.disableNoteEncryption_onPress();
 					},
 					disabled: readOnly || !this.props.noteLockSessionUnlocked,
 				});
-				output.push({
-					title: _('Lock encrypted notes'),
-					icon: 'material lock-outline',
-					onPress: () => {
-						void (async () => {
-							// Lock only after the queue drains, so a pending save cannot leave the note
-							// visible because it still counted as modified.
-							await this.saveActionQueue(this.state.note.id).processAllNow();
-							NoteLockSession.instance().lock();
-						})();
-					},
-					disabled: !this.props.noteLockSessionUnlocked,
-				});
 			}
+		}
+
+		// Relocking applies to the session rather than the open note, so it stays available
+		// whichever note is being viewed.
+		if (isNoteLockEnabled()) {
+			output.push({
+				title: _('Relock all notes'),
+				icon: 'material lock-outline',
+				onPress: () => {
+					void (async () => {
+						// Lock only after the queue drains, so a pending save cannot leave the note
+						// visible because it still counted as modified.
+						await this.saveActionQueue(this.state.note.id).processAllNow();
+						NoteLockSession.instance().lock();
+					})();
+				},
+				disabled: !this.props.noteLockSessionUnlocked,
+			});
 		}
 
 		if (this.state.mode === 'edit') {
@@ -1856,8 +1869,9 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			// available space.
 			&& !this.titleTextFieldRef.current?.isFocused();
 
-		// Unsaved changes keep the editor rather than the panel - their save re-encrypts with the captured key.
-		const noteLockPanelVisible = isNoteLockEnabled() && !!note.is_locked && (!this.props.noteLockSessionUnlocked || !this.state.noteLockKey) && !this.isModified();
+		// Unsaved changes keep the editor rather than the panel - their save re-encrypts with the
+		// captured key. An undecryptable note has no plaintext to edit, so it always keeps the panel.
+		const noteLockPanelVisible = isNoteLockEnabled() && !!note.is_locked && (!this.props.noteLockSessionUnlocked || !this.state.noteLockKey) && (!this.isModified() || this.state.noteLockUndecryptable);
 
 		let bodyComponent = null;
 

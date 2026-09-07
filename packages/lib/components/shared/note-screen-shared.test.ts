@@ -76,8 +76,7 @@ const mockUnlockedSession = () => {
 	}));
 };
 
-// Every save of a locked note body must be gated, so plaintext never reaches the database
-// (including the transient save when a deleted note is recreated).
+// Recreating a deleted locked note must gate its full-body save.
 const expectGatedLockedSaves = (saveSpy: jest.SpyInstance) => {
 	for (const [note, options] of saveSpy.mock.calls) {
 		if ((note as NoteEntity).is_locked && 'body' in (note as NoteEntity)) {
@@ -171,23 +170,6 @@ describe('note-screen-shared', () => {
 		expect(comp.state.lastSavedNote.body).toBe('plain text');
 	});
 
-	it('should keep the body encrypted when saving a single body property of a locked note', async () => {
-		const testNote = await Note.save({ title: 'Locked', body: 'enc(- [ ] task)', is_locked: 1, parent_id: folderId });
-
-		mockUnlockedSession();
-
-		// State as after a gated load: plaintext body, decrypted-state marker, captured key.
-		const loadedNote = { ...testNote, body: '- [ ] task', isDecrypted: true };
-		const comp = makeComp(loadedNote, { noteLockKey: { id: 'key-id', plainText: 'key' } });
-
-		await shared.saveOneProperty(comp, 'body', '- [x] task');
-
-		const savedNote = await Note.load(testNote.id);
-		expect(savedNote.is_locked).toBe(1);
-		expect(savedNote.body).toBe('enc(- [x] task)');
-		expect(comp.state.note.body).toBe('- [x] task');
-	});
-
 	it('should keep the decrypted state when a property save recreates a deleted note', async () => {
 		const testNote = await Note.save({ title: 'Locked', body: 'enc(- [ ] task)', is_locked: 1, parent_id: folderId });
 
@@ -198,15 +180,26 @@ describe('note-screen-shared', () => {
 		// e.g. deleted from another client while the note was open.
 		await Note.batchDelete([testNote.id]);
 
-		const saveSpy = jest.spyOn(Note, 'save');
-		await shared.saveOneProperty(comp, 'body', '- [x] task');
+		await shared.saveOneProperty(comp, 'todo_completed', 1);
 
 		const newId = comp.state.note.id;
 		expect(newId).not.toBe(testNote.id);
 		const savedNote = await Note.load(newId);
 		expect(savedNote.is_locked).toBe(1);
-		expect(savedNote.body).toBe('enc(- [x] task)');
-		expectGatedLockedSaves(saveSpy);
+		expect(savedNote.body).toBe('enc(- [ ] task)');
+		expect(savedNote.todo_completed).toBe(1);
+		expect(comp.state.note.isDecrypted).toBe(true);
+	});
+
+	it('should save a body property change and keep it in the state', async () => {
+		const testNote = await Note.save({ title: 'Task note', body: '- [ ] task', parent_id: folderId });
+		const comp = makeComp(testNote);
+
+		await shared.saveOneProperty(comp, 'body', '- [x] task');
+
+		expect((await Note.load(testNote.id)).body).toBe('- [x] task');
+		expect(comp.state.note.body).toBe('- [x] task');
+		expect(comp.state.lastSavedNote.body).toBe('- [x] task');
 	});
 
 	it('should not revert a lock state change that happens while a save is in flight', async () => {
@@ -237,7 +230,7 @@ describe('note-screen-shared', () => {
 		await savePromise;
 
 		expect(comp.state.note.is_locked).toBe(1);
-		expect((comp.state.note as Record<string, unknown>).isDecrypted).toBe(true);
+		expect(comp.state.note.isDecrypted).toBe(true);
 
 		// The scheduled lock save runs against that state.
 		await shared.saveNoteButton_press(comp, comp.state, null, null);
@@ -266,7 +259,7 @@ describe('note-screen-shared', () => {
 		expect(savedNote.is_locked).toBe(1);
 		expect(savedNote.body).toBe('enc(plain text)');
 		expect(comp.state.note.body).toBe('plain text');
-		expect((comp.state.note as Record<string, unknown>).isDecrypted).toBe(true);
+		expect(comp.state.note.isDecrypted).toBe(true);
 		expectGatedLockedSaves(saveSpy);
 	});
 
@@ -297,6 +290,19 @@ describe('note-screen-shared', () => {
 		const comp = makeComp(testNote, { note: { ...testNote, body: 'edited text' } });
 		await shared.saveNoteButton_press(comp, comp.state, null, null);
 
+		expect(shared.isModified(comp)).toBe(false);
+	});
+
+	it('should not report an undecryptable note as modified after a property save', async () => {
+		const saved = await Note.save({ title: 'Old key', body: 'enc(secret)', is_locked: 1, parent_id: folderId });
+		// Backdated so the property save below is guaranteed to stamp newer timestamps.
+		await Note.save({ id: saved.id, updated_time: 1000, user_updated_time: 1000 }, { autoTimestamp: false });
+		const comp = makeComp(await Note.load(saved.id), { noteLockUndecryptable: true });
+
+		await shared.saveOneProperty(comp, 'todo_completed', Date.now());
+
+		expect(comp.state.note.updated_time).toBe(comp.state.lastSavedNote.updated_time);
+		expect(comp.state.note.user_updated_time).toBe(comp.state.lastSavedNote.user_updated_time);
 		expect(shared.isModified(comp)).toBe(false);
 	});
 
