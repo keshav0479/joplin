@@ -120,7 +120,7 @@ const renderer: ListRenderer = {
 				{{#cells}}
 					<div data-name="{{name}}" class="item" style="{{{styleHtml}}}">
 						<div class="content">
-							<i class="watchedicon fa fa-share-square"></i><i class="lockedicon fa fa-lock"></i>{{{contentHtml}}}
+							<i class="watchedicon fa fa-share-square"></i><i class="lockedicon fa fa-lock" role="img" aria-label="{{note.lockedLabel}}"></i>{{{contentHtml}}}
 						</div>
 					</div>
 				{{/cells}}
@@ -160,7 +160,7 @@ const renderer: ListRenderer = {
 	onRenderNote: async (props: any) => {
 		return {
 			...props,
-			note: { ...props.note, is_locked: isNoteLockEnabled() ? props.note.is_locked : 0 },
+			note: { ...props.note, is_locked: isNoteLockEnabled() ? props.note.is_locked : 0, lockedLabel: _('Locked') },
 		};
 	},
 };

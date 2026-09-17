@@ -171,7 +171,7 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 					<input class="checkbox" data-id="todo-checkbox" type="checkbox" {{#note.todo_completed}}checked="checked"{{/note.todo_completed}}>
 				{{/note.is_todo}}
 				<i class="watchedicon fa fa-share-square"></i>
-				{{#note.is_locked}}<i class="lockedicon fa fa-lock"></i>{{/note.is_locked}}
+				{{#note.is_locked}}<i class="lockedicon fa fa-lock" role="img" aria-label="{{note.lockedLabel}}"></i>{{/note.is_locked}}
 				<div class="titlecontent">{{note.title}}</div>
 			</div>
 			<div class="preview">{{notePreview}}</div>
@@ -184,7 +184,7 @@ const defaultLeftToRightItemRenderer: ListRenderer = {
 
 		return {
 			...props,
-			note: { ...props.note, is_locked: isLocked },
+			note: { ...props.note, is_locked: isLocked, lockedLabel: _('Locked') },
 			// A locked note's body is ciphertext, so there is no meaningful preview to show.
 			notePreview: isLocked ? '' : markupToHtml_.stripMarkup(MarkupLanguage.Markdown, props.note.body).substring(0, 200),
 			titleWidth: props.item.size.width - 32,

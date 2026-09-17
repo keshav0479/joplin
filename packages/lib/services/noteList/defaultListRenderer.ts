@@ -186,7 +186,7 @@ const renderer: ListRenderer = {
 			{{/note.is_todo}}
 			<div class="title" data-id="{{note.id}}">
 				<i class="watchedicon fa fa-share-square"></i>
-				{{#note.is_locked}}<i class="lockedicon fa fa-lock"></i>{{/note.is_locked}}
+				{{#note.is_locked}}<i class="lockedicon fa fa-lock" role="img" aria-label="{{note.lockedLabel}}"></i>{{/note.is_locked}}
 				<span>{{note.title}}</span>
 			</div>
 			{{#checkboxStats}}
@@ -205,7 +205,7 @@ const renderer: ListRenderer = {
 	onRenderNote: async (props: Props) => {
 		return {
 			...props,
-			note: { ...props.note, is_locked: isNoteLockEnabled() ? props.note.is_locked : 0 },
+			note: { ...props.note, is_locked: isNoteLockEnabled() ? props.note.is_locked : 0, lockedLabel: _('Locked') },
 			checkboxStats: props.note.checkboxes,
 		};
 	},
