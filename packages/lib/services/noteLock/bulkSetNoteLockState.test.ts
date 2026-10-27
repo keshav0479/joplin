@@ -57,7 +57,7 @@ describe('bulkSetNoteLockState', () => {
 
 		const result = await bulkSetNoteLockState(await folderTreeNoteIds(folder.id), true);
 
-		expect(result).toEqual({ changed: 2, skipped: 1, failed: 0 });
+		expect(result).toEqual({ changed: 2, skipped: 1, failed: 0, failedResources: 0 });
 		for (const id of [note1.id, note2.id, alreadyLocked.id]) {
 			const note = await Note.load(id);
 			expect(note.is_locked).toBe(1);
@@ -77,7 +77,7 @@ describe('bulkSetNoteLockState', () => {
 
 		const result = await bulkSetNoteLockState([note1.id, note2.id, plainNote.id], false);
 
-		expect(result).toEqual({ changed: 2, skipped: 1, failed: 0 });
+		expect(result).toEqual({ changed: 2, skipped: 1, failed: 0, failedResources: 0 });
 		expect(await Note.load(note1.id)).toMatchObject({ is_locked: 0, body: 'secret one' });
 		expect(await Note.load(note2.id)).toMatchObject({ is_locked: 0, body: 'secret two' });
 		expect((await Note.load(notSelected.id)).is_locked).toBe(1);
@@ -90,7 +90,7 @@ describe('bulkSetNoteLockState', () => {
 		const cleanup = simulateReadOnlyShareEnv('share-1');
 		try {
 			const result = await bulkSetNoteLockState([sharedNote.id], true);
-			expect(result).toEqual({ changed: 0, skipped: 1, failed: 0 });
+			expect(result).toEqual({ changed: 0, skipped: 1, failed: 0, failedResources: 0 });
 		} finally {
 			cleanup();
 		}
@@ -114,7 +114,7 @@ describe('bulkSetNoteLockState', () => {
 			return saved;
 		});
 
-		expect(await bulkSetNoteLockState([note1.id, note2.id], isLocked)).toEqual({ changed: 2, skipped: 0, failed: 0 });
+		expect(await bulkSetNoteLockState([note1.id, note2.id], isLocked)).toEqual({ changed: 2, skipped: 0, failed: 0, failedResources: 0 });
 		for (const id of [note1.id, note2.id]) {
 			expect((await Note.load(id)).is_locked).toBe(isLocked ? 1 : 0);
 		}
@@ -127,7 +127,7 @@ describe('bulkSetNoteLockState', () => {
 		const badNote = await createLockedNote({ title: 'bad', body: `bad${String.fromCharCode(0)}body`, parent_id: folder.id });
 		const goodNote = await createLockedNote({ title: 'good', body: 'good body', parent_id: folder.id });
 
-		expect(await bulkSetNoteLockState([badNote.id, goodNote.id], false)).toEqual({ changed: 1, skipped: 0, failed: 1 });
+		expect(await bulkSetNoteLockState([badNote.id, goodNote.id], false)).toEqual({ changed: 1, skipped: 0, failed: 1, failedResources: 0 });
 		expect((await Note.load(badNote.id)).is_locked).toBe(1);
 		expect(await Note.load(goodNote.id)).toMatchObject({ is_locked: 0, body: 'good body' });
 	});
@@ -287,7 +287,7 @@ describe('bulkSetNoteLockState', () => {
 		await db().exec('UPDATE notes SET body = ? WHERE id = ?', ['JLD01undecryptable', otherKeyNote.id]);
 		const plainNote = await Note.save({ title: 'plain', body: 'plain body', parent_id: folder.id });
 
-		expect(await bulkSetNoteLockState(await folderTreeNoteIds(folder.id), true)).toEqual({ changed: 1, skipped: 1, failed: 0 });
+		expect(await bulkSetNoteLockState(await folderTreeNoteIds(folder.id), true)).toEqual({ changed: 1, skipped: 1, failed: 0, failedResources: 0 });
 		expect((await Note.load(plainNote.id)).is_locked).toBe(1);
 		expect((await Note.load(otherKeyNote.id)).body).toBe('JLD01undecryptable');
 	});
@@ -303,7 +303,7 @@ describe('bulkSetNoteLockState', () => {
 
 		await promptAndBulkSetNoteLockState([note.id], true, { promptPassword, goToNoteLockSetup: jest.fn() }, jest.fn(), { wholeNotebook: true });
 
-		expect(showMessageBox.mock.calls[0][0]).toBe('Are you sure you want to lock all notes in this notebook and its nested notebooks?');
+		expect(showMessageBox.mock.calls[0][0]).toBe('Are you sure you want to lock all notes in this notebook and its nested notebooks? Their attachments will be locked too, except the ones that notes which are not locked also use.');
 		expect(showMessageBox.mock.calls[0][1].buttons).toEqual(['Yes', 'No']);
 		// The question comes before the password, so No asks for nothing.
 		expect(promptPassword).toHaveBeenCalledTimes(locked ? 1 : 0);

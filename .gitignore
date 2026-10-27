@@ -1816,6 +1816,8 @@ packages/lib/services/noteLock/NoteLockKey.js
 packages/lib/services/noteLock/NoteLockKeyMigration.test.js
 packages/lib/services/noteLock/NoteLockKeyMigration.js
 packages/lib/services/noteLock/NoteLockNote.js
+packages/lib/services/noteLock/NoteLockResource.test.js
+packages/lib/services/noteLock/NoteLockResource.js
 packages/lib/services/noteLock/NoteLockService.test.js
 packages/lib/services/noteLock/NoteLockService.js
 packages/lib/services/noteLock/NoteLockSession.test.js

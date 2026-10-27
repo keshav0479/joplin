@@ -344,7 +344,7 @@ const mapStateToProps = (state: AppState) => {
 		shareInvitations: state.shareService.shareInvitations,
 		processingShareInvitationResponse: state.shareService.processingShareInvitationResponse,
 		isSafeMode: state.settings.isSafeMode,
-		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning,
+		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning || state.noteLockResourceChangeRunning,
 		mustUpgradeAppMessage: state.mustUpgradeAppMessage,
 		syncTargetAppMinVersion: syncInfo.appMinVersion,
 		showInvalidJoplinCloudCredential: state.settings['sync.target'] === 10 && state.mustAuthenticate,
