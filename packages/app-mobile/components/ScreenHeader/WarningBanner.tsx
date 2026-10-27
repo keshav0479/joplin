@@ -214,7 +214,7 @@ export default connect((state: AppState) => {
 		shareInvitations: state.shareService.shareInvitations,
 		processingShareInvitationResponse: state.shareService.processingShareInvitationResponse,
 		showInvalidJoplinCloudCredential: state.settings['sync.target'] === 10 && !isSyncLoginRoute(state) && state.mustAuthenticate,
-		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning,
+		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning || state.noteLockResourceChangeRunning,
 		noteLockKeyConflict: noteLockKeyConflictFromState(state),
 		noteLockMigrationStatus: state.noteLockMigrationStatus,
 	};

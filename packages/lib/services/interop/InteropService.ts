@@ -12,6 +12,7 @@ import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 import NoteLockNote, { NoteLockNoteEntity } from '../noteLock/NoteLockNote';
 import { DecryptedNoteLockKey } from '../noteLock/NoteLockKey';
 import NoteLockSession from '../noteLock/NoteLockSession';
+import NoteLockResource from '../noteLock/NoteLockResource';
 import { NoteEntity } from '../database/types';
 import InteropService_Importer_Jex from './InteropService_Importer_Jex';
 import InteropService_Importer_Md from './InteropService_Importer_Md';
@@ -411,6 +412,8 @@ export default class InteropService {
 		// Read once, so enabling the feature partway through cannot leave the locked notes queued before it as ciphertext.
 		// Turning it off partway is caught by the gated load in decryptedNoteForExport_.
 		const noteLockEnabled = isNoteLockEnabled();
+		// An attachment that is being locked or unlocked would be copied halfway through.
+		if (noteLockEnabled) await NoteLockResource.idle();
 		// Captured at the start, so locking the session partway through does not skip the remaining locked notes.
 		const noteLockKey = NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
 

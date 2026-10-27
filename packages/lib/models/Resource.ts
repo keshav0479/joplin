@@ -537,6 +537,7 @@ export default class Resource extends BaseItem {
 				WHERE
 					(ocr_status = ? OR ocr_status = ? OR ocr_status = ?) AND
 					encryption_applied = 0 AND
+					is_locked = 0 AND
 					mime IN ('${supportedMimeTypes.join('\',\'')}')
 			`,
 			params: [

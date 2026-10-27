@@ -14,6 +14,8 @@ import { substrWithEllipsis } from '../../string-utils';
 
 const logger = Logger.create('OcrService');
 
+const isLocked = async (resourceId: string) => !!(await Resource.load(resourceId, { fields: ['is_locked'] }))?.is_locked;
+
 // From: https://github.com/naptha/tesseract.js/blob/master/docs/image-format.md
 export const supportedMimeTypes = [
 	'application/pdf',
@@ -100,6 +102,8 @@ export default class OcrService {
 
 	private async recognize(language: string, resource: ResourceEntity): Promise<RecognizeResult|null> {
 		if (resource.encryption_applied) throw new Error(`Cannot OCR encrypted resource: ${resource.id}`);
+		// The text would hold the same data as the encrypted file. Loaded here since the queued resource can be locked meanwhile.
+		if (await isLocked(resource.id)) return null;
 
 		if (getOcrDriverId(resource) === ResourceOcrDriverId.HandwrittenText && !Setting.value('ocr.handwrittenTextDriverEnabled')) {
 			logger.debug('Skipping OCR of', resource.id, 'with the HandwrittenText driver. The HTR driver has been disabled by the user.');
@@ -238,6 +242,8 @@ export default class OcrService {
 					}
 
 					const recognizeResult = await this.recognize(language, resource);
+					// Locking clears the recognised text, which this would bring back if the lock happened during OCR.
+					if (recognizeResult && await isLocked(resource.id)) return;
 					if (recognizeResult) {
 						toSave = {
 							...toSave,
