@@ -666,7 +666,7 @@ export default class Folder extends BaseItem {
 				WHERE (
 					n.share_id != r.share_id
 					OR n.is_shared != r.is_shared
-				) AND nr.is_associated = 1
+				) AND nr.is_associated = 1 AND r.is_locked = 0
 			`)) as Row[];
 
 			if (!rows.length) return;

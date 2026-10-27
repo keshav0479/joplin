@@ -28,6 +28,7 @@ const { isImageMimeType } = require('../resourceUtils');
 import { MarkupToHtml } from '@joplin/renderer';
 import { ALL_NOTES_FILTER_ID } from '../reserved-ids';
 import NoteLockNote, { NoteLockNoteEntity } from '../services/noteLock/NoteLockNote';
+import NoteLockResource from '../services/noteLock/NoteLockResource';
 import isNoteLockEnabled from '../services/noteLock/isNoteLockEnabled';
 import { isValidNoteLockHeader } from '../services/e2ee/EncryptionService';
 import { ShareType, StateShare } from '../services/share/reducer';
@@ -1073,6 +1074,14 @@ export default class Note extends BaseItem {
 		if (isNoteLockEnabled() && !!options?.useNoteLock && NoteLockNote.isLocking(o, oldNote)) {
 			await ItemChange.waitForAllSaved();
 			await this.revisionService().deleteUnencryptedHistoryForNote(savedNote.id, { sourceDescription: 'Note.save: note lock' });
+		}
+
+		// The attachments follow the note's lock state, including ones added to a note that is already locked.
+		if (isNoteLockEnabled() && !!options?.useNoteLock && !options.skipNoteLockResources) {
+			const lockChanged = NoteLockNote.isLocked(o) !== NoteLockNote.isLocked(oldNote);
+			if (lockChanged || (NoteLockNote.isLocked(o) && o.extracted_resource_ids !== oldNote?.extracted_resource_ids)) {
+				NoteLockResource.updateInBackground(savedNote.id, options.noteLockKey);
+			}
 		}
 
 		void ItemChange.add(BaseModel.TYPE_NOTE, savedNote.id, isNew ? ItemChange.TYPE_CREATE : ItemChange.TYPE_UPDATE, {

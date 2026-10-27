@@ -14,6 +14,7 @@ import isNoteLockEnabled from './isNoteLockEnabled';
 import NoteLockSession from './NoteLockSession';
 import { NoteLockNoteEntity } from './NoteLockNote';
 import { NoteLockPrompts, unlockNoteLockSession } from './noteLockPrompts';
+import NoteLockResource from './NoteLockResource';
 
 export const folderTreeNoteIds = async (folderId: string) => {
 	const folderIds = [folderId].concat((await Folder.allChildrenFolders(folderId)).map(folder => folder.id));
@@ -34,7 +35,7 @@ const bulkSetNoteLockState = async (noteIds: string[], isLocked: boolean) => {
 	// Captured once so that locking the session mid-run does not fail the remaining notes. Throws if the session is locked.
 	const noteLockKey = NoteLockSession.instance().decryptedKey();
 
-	const result = { changed: 0, skipped: 0, failed: 0 };
+	const result = { changed: 0, skipped: 0, failed: 0, failedResources: 0 };
 	for (const noteId of noteIds) {
 		throwIfMigrationNeeded();
 		try {
@@ -52,9 +53,10 @@ const bulkSetNoteLockState = async (noteIds: string[], isLocked: boolean) => {
 			// would be saved back under the wrong lock state.
 			if (!note.isDecrypted) throw new Error('The note was loaded without the note lock gate');
 			// Validated like a save from the note screen, so a body that cannot be stored is reported rather than written.
-			await Note.save({ ...note, is_locked: isLocked ? 1 : 0 }, { useNoteLock: true, noteLockKey, userSideValidation: true });
+			await Note.save({ ...note, is_locked: isLocked ? 1 : 0 }, { useNoteLock: true, noteLockKey, userSideValidation: true, skipNoteLockResources: true });
 			eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked });
 			result.changed++;
+			result.failedResources += await NoteLockResource.update(noteId, noteLockKey);
 		} catch {
 			result.failed++;
 		}
@@ -84,19 +86,22 @@ export const promptAndBulkSetNoteLockState = async (noteIds: string[], isLocked:
 		throwIfMigrationNeeded();
 		if (options.wholeNotebook) {
 			const question = isLocked
-				? _('Are you sure you want to lock all notes in this notebook and its nested notebooks?')
-				: _('Are you sure you want to remove lock from all notes in this notebook and its nested notebooks?');
+				? _('Are you sure you want to lock all notes in this notebook and its nested notebooks? Their attachments will be locked too, except the ones that notes which are not locked also use.')
+				: _('Are you sure you want to remove lock from all notes in this notebook and its nested notebooks? This also removes the lock from their attachments, including the ones that other locked notes use.');
 			if (await shim.showMessageBox(question, { buttons: [_('Yes'), _('No')], type: MessageBoxType.Confirm, cancelId: 1 }) !== 0) return;
 		}
 		if (!await unlockNoteLockSession(prompts)) return;
 		await options.beforeChange?.();
 		dispatch({ type: 'NOTE_LOCK_BULK_CHANGE_RUNNING_SET', value: true });
-		const { failed } = await bulkSetNoteLockState(noteIds, isLocked);
+		const { failed, failedResources } = await bulkSetNoteLockState(noteIds, isLocked);
+		const messages = [];
 		if (failed) {
-			message = isLocked
+			messages.push(isLocked
 				? _n('%d note could not be locked.', '%d notes could not be locked.', failed, failed)
-				: _n('The note lock could not be removed from %d note.', 'The note lock could not be removed from %d notes.', failed, failed);
+				: _n('The note lock could not be removed from %d note.', 'The note lock could not be removed from %d notes.', failed, failed));
 		}
+		if (failedResources) messages.push(_n('%d attachment could not be updated to match the note lock.', '%d attachments could not be updated to match the note lock.', failedResources, failedResources));
+		message = messages.join('\n');
 	} catch (error) {
 		message = error.message;
 	} finally {

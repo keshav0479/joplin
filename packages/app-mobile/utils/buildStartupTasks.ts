@@ -20,6 +20,7 @@ import initProfile from '@joplin/lib/services/profileConfig/initProfile';
 import VersionInfo from 'react-native-version-info';
 const AlarmServiceDriver = require('../services/AlarmServiceDriver').default;
 import NavService from '@joplin/lib/services/NavService';
+import NoteLockResource from '@joplin/lib/services/noteLock/NoteLockResource';
 import { Dispatch, Store } from 'redux';
 import shimInit from '../utils/shim-init-react';
 import Note from '@joplin/lib/models/Note';
@@ -243,6 +244,7 @@ const buildStartupTasks = (
 		BaseModel.dispatch = dispatch;
 		BaseSyncTarget.dispatch = dispatch;
 		NavService.dispatch = dispatch;
+		NoteLockResource.dispatch = dispatch;
 		BaseModel.setDb(reg.db());
 		KvStore.instance().setDb(reg.db());
 

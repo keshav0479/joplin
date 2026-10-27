@@ -200,6 +200,7 @@ export interface State extends WindowState {
 	hasEncryptedItems: boolean;
 	noteLockSessionUnlocked: boolean;
 	noteLockBulkChangeRunning: boolean;
+	noteLockResourceChangeRunning: boolean;
 	noteLockMigrationStatus: NoteLockMigrationStatus|null;
 	needApiAuth: boolean;
 	profileConfig: ProfileConfig;
@@ -273,6 +274,7 @@ export const defaultState: State = {
 	hasEncryptedItems: false,
 	noteLockSessionUnlocked: false,
 	noteLockBulkChangeRunning: false,
+	noteLockResourceChangeRunning: false,
 	noteLockMigrationStatus: null,
 	needApiAuth: false,
 	profileConfig: null,
@@ -1593,6 +1595,10 @@ const reducer = produce((draft: Draft<State> = defaultState, action: any) => {
 
 		case 'NOTE_LOCK_BULK_CHANGE_RUNNING_SET':
 			draft.noteLockBulkChangeRunning = action.value;
+			break;
+
+		case 'NOTE_LOCK_RESOURCE_CHANGE_RUNNING_SET':
+			draft.noteLockResourceChangeRunning = action.value;
 			break;
 
 		case 'NOTE_LOCK_MIGRATION_STATUS_SET':

@@ -61,6 +61,8 @@ export interface SaveOptions {
 	// Encrypt with this key captured when the note was decrypted, instead of the live session key.
 	// Lets a pending editor save complete after the session locks; a real key rotation still aborts it.
 	noteLockKey?: DecryptedNoteLockKey;
+	// For callers that update the attachments themselves and wait for it, instead of in the background.
+	skipNoteLockResources?: boolean;
 
 	changeSource?: number;
 
