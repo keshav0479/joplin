@@ -69,10 +69,25 @@ export const resourceStatusImage = function(status: string) {
 	return resourceStatusFile(status);
 };
 
+export const lockedImage = function() {
+	// A padlock, drawn like the other status icons.
+	return `
+		<svg width="1152" height="1536" xmlns="http://www.w3.org/2000/svg">
+		    <path d="M320 640h512V448c0-141-115-256-256-256S320 307 320 448v192zm832 96v576c0 53-43 96-96 96H96c-53 0-96-43-96-96V736c0-53 43-96 96-96h32V448C128 202 330 0 576 0s448 202 448 448v192h32c53 0 96 43 96 96z"/>
+		</svg>
+	`;
+};
+
+export const lockedResourceClickJs = (postMessageSyntax: string, resourceId: string) => {
+	return `${postMessageSyntax}(${JSON.stringify(`joplin://${resourceId}`)}, { resourceId: ${JSON.stringify(resourceId)} }); return false;`;
+};
+
 export const resourceStatusFile = function(status: string) {
 	if (status === 'notDownloaded') return notDownloadedResource();
 	if (status === 'downloading') return loaderImage();
 	if (status === 'encrypted') return loaderImage();
+	if (status === 'decrypting') return loaderImage();
+	if (status === 'locked') return lockedImage();
 	if (status === 'error') return errorImage();
 
 	throw new Error(`Unknown status: ${status}`);
@@ -83,6 +98,8 @@ export const resourceStatusIndex = function(status: string) {
 	if (status === 'notDownloaded') return 0;
 	if (status === 'downloading') return 1;
 	if (status === 'encrypted') return 2;
+	if (status === 'locked') return 3;
+	if (status === 'decrypting') return 4;
 	if (status === 'ready') return 10;
 
 	throw new Error(`Unknown status: ${status}`);
@@ -93,6 +110,8 @@ export const resourceStatusName = function(index: number) {
 	if (index === 0) return 'notDownloaded';
 	if (index === 1) return 'downloading';
 	if (index === 2) return 'encrypted';
+	if (index === 3) return 'locked';
+	if (index === 4) return 'decrypting';
 	if (index === 10) return 'ready';
 
 	throw new Error(`Unknown index: ${index}`);
@@ -114,6 +133,8 @@ export const resourceStatus = function(ResourceModel: OptionsResourceModel, reso
 		} else if (localState.fetch_status === FetchStatuses.FETCH_STATUS_DONE) {
 			if (resource.encryption_blob_encrypted || resource.encryption_applied) {
 				status = 'encrypted';
+			} else if (resourceInfo.noteLock && resource.is_locked && !resourceInfo.noteLock.path) {
+				status = resourceInfo.noteLock.sessionLocked ? 'locked' : 'decrypting';
 			}
 		}
 	} else {
@@ -129,7 +150,7 @@ type ImageMarkupData = {
 	title: string;
 }|{ src: string; before: string; after: string };
 
-export const imageReplacement = function(ResourceModel: OptionsResourceModel, markup: ImageMarkupData, resources: ResourceInfos, resourceBaseUrl: string, itemIdToUrl: ItemIdToUrlHandler = null) {
+export const imageReplacement = function(ResourceModel: OptionsResourceModel, markup: ImageMarkupData, resources: ResourceInfos, resourceBaseUrl: string, itemIdToUrl: ItemIdToUrlHandler = null, postMessageSyntax: string = null) {
 	if (!ResourceModel || !resources) return null;
 
 	const src = markup.src;
@@ -156,6 +177,8 @@ export const imageReplacement = function(ResourceModel: OptionsResourceModel, ma
 			attrs['data-original-before'] = markup.before;
 			attrs['data-original-after'] = markup.after;
 		}
+		// Opening a locked attachment asks for the note lock password, after which it is shown.
+		if (status === 'locked' && postMessageSyntax) attrs.onclick = lockedResourceClickJs(postMessageSyntax, resourceId);
 
 		// contenteditable="false": Improves support for the Rich Text Editor -- without this,
 		// users can add content within the <span>, which breaks the html-to-md conversion.
@@ -184,7 +207,7 @@ export const imageReplacement = function(ResourceModel: OptionsResourceModel, ma
 				temp.push('./');
 			}
 
-			temp.push(ResourceModel.filename(resource));
+			temp.push(result.noteLock?.path ?? ResourceModel.filename(resource));
 			temp.push(timestampParameter);
 
 			newSrc = temp.join('');
@@ -195,6 +218,7 @@ export const imageReplacement = function(ResourceModel: OptionsResourceModel, ma
 		return {
 			'data-resource-id': resource.id,
 			src: newSrc,
+			...(result.noteLock?.mismatch ? { class: 'note-lock-mismatch' } : {}),
 		};
 	}
 

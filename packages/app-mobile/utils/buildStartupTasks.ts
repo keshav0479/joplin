@@ -23,6 +23,7 @@ import VersionInfo from 'react-native-version-info';
 const AlarmServiceDriver = require('../services/AlarmServiceDriver').default;
 import NavService from '@joplin/lib/services/NavService';
 import NoteLockResource from '@joplin/lib/services/noteLock/NoteLockResource';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 import { Dispatch, Store } from 'redux';
 import shimInit from '../utils/shim-init-react';
 import Note from '@joplin/lib/models/Note';
@@ -349,6 +350,7 @@ const buildStartupTasks = (
 		BaseItem.shareService_ = ShareService.instance();
 		Resource.shareService_ = ShareService.instance();
 		DecryptionWorker.instance().dispatch = dispatch;
+		await NoteLockResourceCache.initialize();
 		DecryptionWorker.instance().setLogger(reg.logger());
 		DecryptionWorker.instance().setKvStore(KvStore.instance());
 		DecryptionWorker.instance().setEncryptionService(EncryptionService.instance());

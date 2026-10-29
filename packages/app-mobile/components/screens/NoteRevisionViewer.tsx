@@ -17,6 +17,9 @@ import RevisionService from '@joplin/lib/services/RevisionService';
 import NoteBodyViewer from '../NoteBodyViewer/NoteBodyViewer';
 import { MarkupLanguage } from '@joplin/renderer';
 import attachedResources, { AttachedResources } from '@joplin/lib/utils/attachedResources';
+import noteLockResourceInfos from '@joplin/lib/services/noteLock/noteLockResourceInfos';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 import shim, { MessageBoxType } from '@joplin/lib/shim';
 import { themeStyle } from '../global-style';
 import getHelpMessage from '@joplin/lib/components/shared/NoteRevisionViewer/getHelpMessage';
@@ -101,7 +104,18 @@ const useRevisionNote = (revisions: RevisionEntity[], revisionId: string, canDec
 		setNote(note);
 		setRestoreNote(encryptedNote);
 
-		const resources = await attachedResources(note?.body ?? '');
+		const attached = await attachedResources(note?.body ?? '');
+		// A revision is not rendered again when a decrypted copy is ready, so it waits for them.
+		if (isNoteLockEnabled() && NoteLockSession.instance().isUnlocked()) {
+			for (const resource of Object.values(attached)) {
+				try {
+					if (resource.item?.is_locked) await NoteLockResourceCache.load(resource.item);
+				} catch {
+					// Shown with the locked placeholder instead.
+				}
+			}
+		}
+		const resources = noteLockResourceInfos(attached, !!note?.is_locked);
 		if (event.cancelled) return;
 		setResources(resources);
 	}, [revisions, revisionId, canDecrypt]);

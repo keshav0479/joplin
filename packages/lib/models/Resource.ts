@@ -660,7 +660,7 @@ export default class Resource extends BaseItem {
 		const orderDirection = sortDirection.toUpperCase();
 		const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
 		const sql = `
-			SELECT id, title, size, file_extension, mime
+			SELECT id, title, size, file_extension, mime, is_locked
 			FROM resources
 			${whereSql}
 			ORDER BY ${orderBy} ${orderDirection}, id ASC

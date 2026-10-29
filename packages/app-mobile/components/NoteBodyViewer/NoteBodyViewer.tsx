@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import useOnMessage, { HandleMessageCallback, OnMarkForDownloadCallback } from './hooks/useOnMessage';
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useContext } from 'react';
 import { View, ViewStyle } from 'react-native';
 import ExtendedWebView from '../ExtendedWebView';
 import { WebViewControl } from '../ExtendedWebView/types';
@@ -12,6 +12,13 @@ import { PluginStates } from '@joplin/lib/services/plugins/reducer';
 import { MarkupLanguage } from '@joplin/renderer';
 import shim from '@joplin/lib/shim';
 import CommandService from '@joplin/lib/services/CommandService';
+import Resource from '@joplin/lib/models/Resource';
+import NavService from '@joplin/lib/services/NavService';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import { unlockNoteLockSession } from '@joplin/lib/services/noteLock/noteLockPrompts';
+import { parseResourceUrl } from '@joplin/lib/urlUtils';
+import { DialogContext } from '../DialogManager';
 import { AppState } from '../../utils/types';
 import { connect } from 'react-redux';
 import useWebViewSetup from '../../contentScripts/rendererBundle/useWebViewSetup';
@@ -40,16 +47,26 @@ interface Props {
 	showNoteLinkIcon: boolean;
 }
 
-const onJoplinLinkClick = async (message: string) => {
-	try {
-		await CommandService.instance().execute('openItem', message);
-	} catch (error) {
-		await shim.showErrorDialog(error.message);
-	}
-};
-
 function NoteBodyViewer(props: Props) {
 	const webviewRef = useRef<WebViewControl>(null);
+	const dialogs = useContext(DialogContext);
+
+	const onJoplinLinkClick = useCallback(async (message: string) => {
+		try {
+			// Tapping a locked attachment while the session is locked asks for the password, after which it is shown.
+			const resourceId = parseResourceUrl(message)?.itemId;
+			if (isNoteLockEnabled() && resourceId && !NoteLockSession.instance().isUnlocked() && (await Resource.load(resourceId, { fields: ['is_locked'] }))?.is_locked) {
+				await unlockNoteLockSession({
+					promptPassword: label => dialogs.promptForText(label, '', true),
+					goToNoteLockSetup: () => void NavService.go('Config', { sectionName: 'noteLock' }),
+				});
+				return;
+			}
+			await CommandService.instance().execute('openItem', message);
+		} catch (error) {
+			await shim.showErrorDialog(error.message);
+		}
+	}, [dialogs]);
 
 	const onScroll = props.onScroll;
 

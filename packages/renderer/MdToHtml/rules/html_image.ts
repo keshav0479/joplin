@@ -5,7 +5,7 @@ import type * as MarkdownIt from 'markdown-it';
 import type Renderer = require('markdown-it/lib/renderer');
 
 function renderImageHtml(before: string, src: string, after: string, ruleOptions: RuleOptions) {
-	const r = utils.imageReplacement(ruleOptions.ResourceModel, { src, before, after }, ruleOptions.resources, ruleOptions.resourceBaseUrl, ruleOptions.itemIdToUrl);
+	const r = utils.imageReplacement(ruleOptions.ResourceModel, { src, before, after }, ruleOptions.resources, ruleOptions.resourceBaseUrl, ruleOptions.itemIdToUrl, ruleOptions.postMessageSyntax);
 	if (typeof r === 'string') return r;
 	if (r) return `<img ${before} ${attributesHtml(r)} ${after}/>`;
 	return `[Image: ${src}]`;

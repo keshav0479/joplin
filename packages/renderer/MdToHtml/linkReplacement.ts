@@ -64,7 +64,7 @@ export default function(href: string, options: Options = null): LinkReplacementR
 
 			return {
 				resourceReady: false,
-				html: `<a class="not-loaded-resource resource-status-${resourceStatus}" data-resource-id="${resourceId}">` + `<img src="data:image/svg+xml;utf8,${htmlentities(icon)}"/>`,
+				html: `<a class="not-loaded-resource resource-status-${resourceStatus}" data-resource-id="${resourceId}"${resourceStatus === 'locked' ? ` onclick='${htmlentities(utils.lockedResourceClickJs(options.postMessageSyntax, resourceId))}'` : ''}>` + `<img src="data:image/svg+xml;utf8,${htmlentities(icon)}"/>`,
 				resource,
 				resourceFullPath: null,
 			};
@@ -118,6 +118,10 @@ export default function(href: string, options: Options = null): LinkReplacementR
 	if (mime) attrHtml.push(`type='${htmlentities(mime)}'`);
 
 	let resourceFullPath = resource && options?.ResourceModel?.fullPath ? options.ResourceModel.fullPath(resource) : null;
+	// A locked attachment is shown from its decrypted copy, which sits under the resource directory.
+	const noteLock = resourceId ? options.resources[resourceId]?.noteLock : null;
+	if (resourceFullPath && noteLock?.path) resourceFullPath = resourceFullPath.slice(0, -options.ResourceModel.filename(resource).length) + noteLock.path;
+	if (noteLock?.mismatch) attrHtml.push('class=\'note-lock-mismatch\'');
 
 	// Handle overrides
 	let addedHrefAttr = false;

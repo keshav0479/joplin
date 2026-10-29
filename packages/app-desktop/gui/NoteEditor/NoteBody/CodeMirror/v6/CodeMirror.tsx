@@ -254,9 +254,20 @@ const CodeMirror = (props: NoteBodyEditorProps, ref: ForwardedRef<NoteBodyEditor
 			editorRef.current?.onResourceChanged(event.id);
 		};
 
+		// Locked attachments are shown from decrypted copies, which come and go with the session.
+		const sessionListener = () => {
+			for (const id in props.resourceInfos) {
+				if (props.resourceInfos[id].item?.is_locked) editorRef.current?.onResourceChanged(id);
+			}
+		};
+
 		eventManager.on(EventName.ResourceChange, listener);
+		eventManager.on(EventName.NoteLockResourceDecrypted, listener);
+		eventManager.on(EventName.NoteLockSessionChange, sessionListener);
 		return () => {
 			eventManager.off(EventName.ResourceChange, listener);
+			eventManager.off(EventName.NoteLockResourceDecrypted, listener);
+			eventManager.off(EventName.NoteLockSessionChange, sessionListener);
 		};
 	}, [props.resourceInfos]);
 

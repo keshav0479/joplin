@@ -59,6 +59,7 @@ export interface ResourceEntity {
 
 	encryption_applied?: number;
 	encryption_blob_encrypted?: number;
+	is_locked?: number;
 }
 
 interface ResourceLocalState {
@@ -68,6 +69,15 @@ interface ResourceLocalState {
 export interface ResourceInfo {
 	localState: ResourceLocalState;
 	item: ResourceEntity;
+	// Set by the app for attachments under note lock.
+	noteLock?: {
+		// The decrypted copy of a locked attachment to show, relative to the resource directory, once it is ready.
+		path?: string;
+		// The session is locked, so the attachment cannot be decrypted until it is unlocked.
+		sessionLocked?: boolean;
+		// The attachment is locked and its note is not, or the other way round.
+		mismatch?: boolean;
+	};
 }
 
 export type ResourceInfos = Record<string, ResourceInfo>;

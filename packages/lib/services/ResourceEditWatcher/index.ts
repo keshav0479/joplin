@@ -8,6 +8,8 @@ import Resource from '../../models/Resource';
 import { ResourceEntity } from '../database/types';
 import { EventEmitter } from 'events';
 import * as chokidar from 'chokidar';
+import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
+import NoteLockService from '../noteLock/NoteLockService';
 
 type WindowId = string;
 
@@ -231,7 +233,11 @@ export default class ResourceEditWatcher {
 		if (!(await Resource.isReady(resource))) throw new Error(_('This attachment is not downloaded or not decrypted yet'));
 		const sourceFilePath = Resource.fullPath(resource);
 		const editFilePath = await this.makeEditPath(resource);
-		await shim.fsDriver().copy(sourceFilePath, editFilePath);
+		if (isNoteLockEnabled() && resource.is_locked) {
+			await NoteLockService.withDecryptedKey(scoped => scoped.decryptFile(sourceFilePath, editFilePath));
+		} else {
+			await shim.fsDriver().copy(sourceFilePath, editFilePath);
+		}
 		return { resource, editFilePath };
 	}
 
@@ -293,6 +299,8 @@ export default class ResourceEditWatcher {
 	}
 
 	public async openAndWatch(resourceId: string) {
+		// An edit to a locked attachment could only be saved back as a plain file, so it is never watched.
+		if (isNoteLockEnabled() && (await Resource.load(resourceId, { fields: ['is_locked'] }))?.is_locked) throw new Error(_('A locked attachment can only be opened read-only.'));
 		const watchedItem = await this.watch(resourceId);
 		this.openItem_(watchedItem.path);
 	}

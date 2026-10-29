@@ -77,6 +77,9 @@ export default function useMarkupToHtml(deps: HookDependencies) {
 					return null;
 				}
 
+				// A locked attachment is shown from its decrypted copy.
+				const decryptedPath = resources[id].noteLock?.path;
+				if (decryptedPath) return resourceBaseUrl + decryptedPath + urlParameters;
 				return resourceFullPath(resources[id].item, resourceBaseUrl) + urlParameters;
 			},
 			globalSettings: {

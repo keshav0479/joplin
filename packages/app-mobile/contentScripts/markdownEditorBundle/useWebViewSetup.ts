@@ -12,6 +12,9 @@ import { PluginStates } from '@joplin/lib/services/plugins/reducer';
 import useCodeMirrorPlugins from './utils/useCodeMirrorPlugins';
 import Resource from '@joplin/lib/models/Resource';
 import { parseResourceUrl } from '@joplin/lib/urlUtils';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 const { isImageMimeType } = require('@joplin/lib/resourceUtils');
 
 const logger = Logger.create('markdownEditor');
@@ -161,17 +164,27 @@ const useWebViewSetup = ({
 				const url = parseResourceUrl(src);
 				if (!url.itemId) return null;
 				const item = await Resource.load(url.itemId);
+				// A locked attachment is shown from its decrypted copy, which needs the session unlocked.
+				let filePath = Resource.fullPath(item);
+				if (isNoteLockEnabled() && item?.is_locked) {
+					if (!NoteLockSession.instance().isUnlocked()) return null;
+					try {
+						filePath = await NoteLockResourceCache.load(item);
+					} catch {
+						return null;
+					}
+				}
 
 				if (shim.mobilePlatform() === 'web') {
 					// Maximum 6 MiB on web
 					const maximumSize = 6 * 1024 * 1024;
 					if (isImageMimeType(item.mime) && item.size < maximumSize) {
-						const data = await shim.fsDriver().readFile(Resource.fullPath(item), 'base64');
+						const data = await shim.fsDriver().readFile(filePath, 'base64');
 						return `data:${item.mime};base64,${data}`;
 					}
 					return null;
 				} else {
-					const path = Resource.fullPath(item);
+					const path = filePath;
 					return reloadCounter ? `${path}?r=${reloadCounter}` : path;
 				}
 			},

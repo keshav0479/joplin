@@ -180,9 +180,11 @@ const useWebViewSetup = (props: Props): Result => {
 			if (shim.mobilePlatform() === 'web') {
 				for (const [resourceId, resource] of Object.entries(resources)) {
 					try {
+						// A locked attachment is shown from its decrypted copy.
+						const decryptedPath = resource.noteLock?.path;
 						await renderer.setResourceFile(
 							resourceId,
-							await shim.fsDriver().fileAtPath(Resource.fullPath(resource.item)),
+							await shim.fsDriver().fileAtPath(decryptedPath ? `${Setting.value('resourceDir')}/${decryptedPath}` : Resource.fullPath(resource.item)),
 						);
 					} catch (error) {
 						if (error.code !== 'ENOENT') {

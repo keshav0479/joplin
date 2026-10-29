@@ -37,6 +37,17 @@ const notLoadedCss = `
 		flex-direction: row;
 		align-items: center;
 	}
+
+	/* A locked attachment that cannot be shown until the session is unlocked, which a tap does. */
+	.resource-status-locked {
+		cursor: pointer;
+	}
+
+	/* An attachment whose note lock does not match its note's. */
+	.note-lock-mismatch {
+		outline: 2px dashed #e0a800;
+		outline-offset: 2px;
+	}
 `;
 
 // If we are viewing an HTML note, it means it comes from the web clipper or

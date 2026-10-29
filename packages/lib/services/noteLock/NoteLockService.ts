@@ -29,7 +29,7 @@ export default class NoteLockService {
 		const scoped = new NoteLockService(EncryptionService.instance(), () => key, keyId => session.assertCanEncryptWith(keyId));
 		const scopedView: ScopedNoteLockService = {
 			decryptString: cipherText => scoped.decryptString(cipherText),
-			decryptFile: (srcPath, destPath) => scoped.decryptFile(srcPath, destPath),
+			decryptFile: (srcPath, destPath, isCancelled) => scoped.decryptFile(srcPath, destPath, isCancelled),
 			encryptString: plainText => scoped.encryptString(plainText),
 			encryptFile: (srcPath, destPath) => scoped.encryptFile(srcPath, destPath),
 		};
@@ -72,8 +72,12 @@ export default class NoteLockService {
 		}
 	}
 
-	public async decryptFile(srcPath: string, destPath: string) {
-		return this.encryptionService_.decryptFile(srcPath, destPath, this.encryptionOptions_(this.keySource_()));
+	// isCancelled is checked before each block, so a large file can be abandoned partway through.
+	public async decryptFile(srcPath: string, destPath: string, isCancelled: ()=> boolean = null) {
+		const onProgress = isCancelled ? () => {
+			if (isCancelled()) throw new Error('Note lock decryption was cancelled');
+		} : undefined;
+		return this.encryptionService_.decryptFile(srcPath, destPath, { ...this.encryptionOptions_(this.keySource_()), onProgress });
 	}
 
 	private encryptionOptions_(key: DecryptedNoteLockKey): EncryptOptions {

@@ -15,6 +15,8 @@ import isNoteLockEnabled from '../../services/noteLock/isNoteLockEnabled';
 import NoteLockNote, { NoteLockNoteEntity } from '../../services/noteLock/NoteLockNote';
 import NoteLockSession from '../../services/noteLock/NoteLockSession';
 import type { DecryptedNoteLockKey } from '../../services/noteLock/NoteLockKey';
+import noteLockResourceInfos from '../../services/noteLock/noteLockResourceInfos';
+import eventManager, { EventName } from '../../eventManager';
 
 export interface SharedResource {
 	uri: string;
@@ -433,7 +435,7 @@ shared.reloadNote = async (comp: BaseNoteScreenComponent, useDefaultEditorState 
 			folder: folder,
 			isLoading: false,
 			fromShare: !!comp.props.sharedData,
-			noteResources: await shared.attachedResources(note ? note.body : ''),
+			noteResources: noteLockResourceInfos(await shared.attachedResources(note ? note.body : ''), !!note?.is_locked),
 			readOnly: noteLockBlocked || itemIsReadOnlySync(ModelType.Note, ItemChange.SOURCE_UNSPECIFIED, note as ItemSlice, Setting.value('sync.userId'), BaseItem.syncShareCache),
 			noteLastLoadTime: Date.now(),
 			noteLockKey,
@@ -563,12 +565,19 @@ shared.installResourceHandling = function(refreshResourceHandler: ResourceHandle
 	ResourceFetcher.instance().on('downloadComplete', refreshResourceHandler);
 	ResourceFetcher.instance().on('downloadStarted', refreshResourceHandler);
 	DecryptionWorker.instance().on('resourceDecrypted', refreshResourceHandler);
+	// Locking or unlocking an attachment changes how it is shown.
+	if (isNoteLockEnabled()) {
+		eventManager.on(EventName.ResourceChange, refreshResourceHandler);
+		eventManager.on(EventName.NoteLockResourceDecrypted, refreshResourceHandler);
+	}
 };
 
 shared.uninstallResourceHandling = function(refreshResourceHandler: ResourceHandler) {
 	ResourceFetcher.instance().off('downloadComplete', refreshResourceHandler);
 	ResourceFetcher.instance().off('downloadStarted', refreshResourceHandler);
 	DecryptionWorker.instance().off('resourceDecrypted', refreshResourceHandler);
+	eventManager.off(EventName.ResourceChange, refreshResourceHandler);
+	eventManager.off(EventName.NoteLockResourceDecrypted, refreshResourceHandler);
 };
 
 export default shared;

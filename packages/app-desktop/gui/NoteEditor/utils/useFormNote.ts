@@ -6,6 +6,7 @@ import { splitHtml } from '@joplin/renderer/HtmlToHtml';
 import Setting from '@joplin/lib/models/Setting';
 import usePrevious from '../../hooks/usePrevious';
 import attachedResources, { clearResourceCache } from '@joplin/lib/utils/attachedResources';
+import noteLockResourceInfos from '@joplin/lib/services/noteLock/noteLockResourceInfos';
 import { MarkupToHtml } from '@joplin/renderer';
 import Note from '@joplin/lib/models/Note';
 import ResourceFetcher from '@joplin/lib/services/ResourceFetcher';
@@ -49,6 +50,7 @@ function installResourceChangeHandler(onResourceChangeHandler: ()=> void) {
 	ResourceFetcher.instance().on('downloadStarted', onResourceChangeHandler);
 	DecryptionWorker.instance().on('resourceDecrypted', onResourceChangeHandler);
 	eventManager.on(EventName.ResourceChange, onResourceChangeHandler);
+	eventManager.on(EventName.NoteLockResourceDecrypted, onResourceChangeHandler);
 }
 
 function uninstallResourceChangeHandler(onResourceChangeHandler: ()=> void) {
@@ -56,6 +58,7 @@ function uninstallResourceChangeHandler(onResourceChangeHandler: ()=> void) {
 	ResourceFetcher.instance().off('downloadStarted', onResourceChangeHandler);
 	DecryptionWorker.instance().off('resourceDecrypted', onResourceChangeHandler);
 	eventManager.off(EventName.ResourceChange, onResourceChangeHandler);
+	eventManager.off(EventName.NoteLockResourceDecrypted, onResourceChangeHandler);
 }
 
 function resourceInfosChanged(a: ResourceInfos, b: ResourceInfos): boolean {
@@ -69,6 +72,7 @@ function resourceInfosChanged(a: ResourceInfos, b: ResourceInfos): boolean {
 		if (r1.item.encryption_applied !== r2.item.encryption_applied) return true;
 		if (r1.item.is_shared !== r2.item.is_shared) return true;
 		if (r1.localState.fetch_status !== r2.localState.fetch_status) return true;
+		if (JSON.stringify(r1.noteLock) !== JSON.stringify(r2.noteLock)) return true;
 	}
 
 	return false;
@@ -294,7 +298,7 @@ export default function useFormNote(dependencies: HookDependencies) {
 		// be first because it loads the resource infos in an async way. If we
 		// swap them, the formNote will be updated first and rendered, then the
 		// the resources will load, and the note will be re-rendered.
-		const resources = await attachedResources(n.body);
+		const resources = noteLockResourceInfos(await attachedResources(n.body), !!n.is_locked);
 
 		// If the user changes the note while resources are loading, this can lead to
 		// a note being incorrectly marked as "unchanged".
@@ -389,10 +393,15 @@ export default function useFormNote(dependencies: HookDependencies) {
 		const resourceIds = await Note.linkedResourceIds(formNote.body);
 		if (!event || resourceIds.indexOf(event.id) >= 0) {
 			clearResourceCache();
-			const newResourceInfos = await attachedResources(formNote.body);
+			const newResourceInfos = noteLockResourceInfos(await attachedResources(formNote.body), !!formNote.is_locked);
 			setResourceInfos(newResourceInfos);
 		}
-	}, [formNote.body]);
+	}, [formNote.body, formNote.is_locked]);
+
+	// A locked attachment can only be shown while the session is unlocked.
+	useEffect(() => {
+		if (isNoteLockEnabled()) void onResourceChange();
+	}, [noteLockSessionUnlocked, onResourceChange]);
 
 	useEffect(() => {
 		installResourceChangeHandler(onResourceChange);
@@ -411,7 +420,7 @@ export default function useFormNote(dependencies: HookDependencies) {
 		let cancelled = false;
 
 		async function runEffect() {
-			const r = await attachedResources(formNote.body);
+			const r = noteLockResourceInfos(await attachedResources(formNote.body), !!formNote.is_locked);
 			if (cancelled) return;
 			setResourceInfos((previous: ResourceInfos) => {
 				return resourceInfosChanged(previous, r) ? r : previous;
@@ -423,7 +432,7 @@ export default function useFormNote(dependencies: HookDependencies) {
 		return () => {
 			cancelled = true;
 		};
-	}, [formNote.body]);
+	}, [formNote.body, formNote.is_locked]);
 
 	// Currently, useFormNote relies on formNoteRef being up-to-date immediately after the editor
 	// changes, with no delay during which async code can run. Even a small delay (e.g. that introduced

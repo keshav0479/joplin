@@ -96,6 +96,7 @@ import TextWrapCalculator from '../Notes/TextWrapCalculator';
 import SearchEngine from '@joplin/lib/services/search/SearchEngine';
 import { ALL_NOTES_FILTER_ID } from '@joplin/lib/reserved-ids';
 import { MenuOptionStyle, MenuOptionButton } from '../../BottomDrawerMenu';
+import noteLockResourceInfos from '@joplin/lib/services/noteLock/noteLockResourceInfos';
 
 const emptyArray: never[] = [];
 
@@ -349,7 +350,7 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 			const resourceIds = await Note.linkedResourceIds(noteBody);
 			if (resourceIds.indexOf(resource.id) >= 0) {
 				shared.clearResourceCache();
-				const attachedResources = await shared.attachedResources(noteBody);
+				const attachedResources = noteLockResourceInfos(await shared.attachedResources(noteBody), !!this.state.note?.is_locked);
 				this.setState({ noteResources: attachedResources });
 			}
 		};
@@ -802,6 +803,11 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 		// changes (e.g. a just-enabled lock state) keep the editor and their pending save.
 		if (isNoteLockEnabled() && prevProps.noteLockSessionUnlocked !== this.props.noteLockSessionUnlocked && this.state.note?.is_locked && !this.isModified()) {
 			void this.reloadNoteAndUpdateRefreshKey();
+		} else if (isNoteLockEnabled() && prevProps.noteLockSessionUnlocked !== this.props.noteLockSessionUnlocked && this.state.note?.body) {
+			// Locked attachments of a note that is not locked switch between the placeholder and the decrypted copy.
+			void (async () => {
+				this.setState({ noteResources: noteLockResourceInfos(await shared.attachedResources(this.state.note.body), !!this.state.note.is_locked) });
+			})();
 		}
 
 		if (prevState.multiline !== this.state.multiline && this.titleTextFieldRef.current) {
@@ -1261,6 +1267,11 @@ class NoteScreenComponent extends BaseScreenComponent<ComponentProps, State> imp
 	};
 
 	private async editDrawing(item: BaseItem) {
+		// The drawing would be saved back as a plain file over the encrypted one.
+		if (isNoteLockEnabled() && (item as ResourceEntity).is_locked) {
+			await this.props.dialogs.error(_('A locked drawing cannot be edited.'));
+			return;
+		}
 		const filePath = Resource.fullPath(item);
 		this.setState({
 			showImageEditor: true,
