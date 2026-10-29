@@ -7,7 +7,7 @@ import Resource from '../../models/Resource';
 import shim from '../../shim';
 import { _n } from '../../locale';
 import { NoteEntity, ResourceEntity, ResourceOcrStatus } from '../database/types';
-import { isValidHeaderIdentifier } from '../e2ee/EncryptionService';
+import EncryptionService, { isValidHeaderIdentifier } from '../e2ee/EncryptionService';
 import NoteLockService from './NoteLockService';
 import NoteLockNote from './NoteLockNote';
 import NoteLockSession from './NoteLockSession';
@@ -15,13 +15,18 @@ import type { DecryptedNoteLockKey } from './NoteLockKey';
 
 const logger = Logger.create('NoteLockResource');
 
-const fileHasNoteLockHeader = async (path: string) => {
+// The header is the identifier, the metadata size and 34 characters of metadata, so 64 covers it.
+const readFileStart = async (path: string) => {
 	const handle = await shim.fsDriver().open(path, 'r');
 	try {
-		return isValidHeaderIdentifier(await shim.fsDriver().readFileChunk(handle, 5, 'ascii'), false, true);
+		return await shim.fsDriver().readFileChunk(handle, 64, 'ascii') ?? '';
 	} finally {
 		await shim.fsDriver().close(handle);
 	}
+};
+
+const fileHasNoteLockHeader = async (path: string) => {
+	return isValidHeaderIdentifier((await readFileStart(path)).substring(0, 5), false, true);
 };
 
 // A locked note's body is encrypted, so its attachment ids come from extracted_resource_ids.
@@ -156,6 +161,33 @@ export default class NoteLockResource {
 				await shim.showErrorDialog(error.message);
 			}
 		})();
+	}
+
+	// The id of the key a locked attachment's file is encrypted with.
+	public static async fileKeyId(resource: ResourceEntity) {
+		return (await EncryptionService.instance().decodeHeaderString(await readFileStart(Resource.fullPath(resource)), true)).masterKeyId as string;
+	}
+
+	// For work that needs the plain file of a locked attachment, such as an export, without unlocking it.
+	public static async decryptFile(resource: ResourceEntity, destPath: string, key: DecryptedNoteLockKey) {
+		await NoteLockService.withDecryptedKey(scoped => scoped.decryptFile(Resource.fullPath(resource), destPath), key);
+	}
+
+	// Re-encrypts the file of a locked attachment with another key, as for a key migration or an import from
+	// another profile.
+	public static async changeFileKey(resource: ResourceEntity, fromKey: DecryptedNoteLockKey, toKey: DecryptedNoteLockKey) {
+		await this.mutex_.runExclusive(async () => {
+			const path = Resource.fullPath(resource);
+			const plainPath = `${path}.plain.tmp`;
+			const tempPath = `${path}.tmp`;
+			try {
+				await this.decryptFile(resource, plainPath, fromKey);
+				await NoteLockService.withDecryptedKey(scoped => scoped.encryptFile(plainPath, tempPath), toKey);
+			} finally {
+				await shim.fsDriver().remove(plainPath);
+			}
+			await replaceFile(tempPath, path);
+		});
 	}
 
 	// For the confirmations before a note's lock changes: locking skips attachments an unlocked note

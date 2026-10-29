@@ -94,6 +94,7 @@ export interface StateLastDeletion {
 export interface NoteLockMigrationStatus {
 	running: boolean;
 	failed: number;
+	failedResources?: number;
 	skipped: number;
 	awaitingDecryption: number;
 	failedRevisions: number;

@@ -1,8 +1,10 @@
 import Setting from '../../models/Setting';
 import Note from '../../models/Note';
 import uuid from '../../uuid';
-import { afterAllCleanUp, db, encryptionService, revisionService, setupDatabaseAndSynchronizer, switchClient, withLogLevel } from '../../testing/test-utils';
+import { afterAllCleanUp, db, encryptionService, fileContentEqual, revisionService, setupDatabaseAndSynchronizer, supportDir, switchClient, withLogLevel } from '../../testing/test-utils';
 import Revision from '../../models/Revision';
+import Resource from '../../models/Resource';
+import NoteLockResource from './NoteLockResource';
 import EncryptionService, { EncryptionMethod } from '../e2ee/EncryptionService';
 import { MasterKeyEntity } from '../e2ee/types';
 import { localSyncInfo, noteLockKeyConflict } from '../synchronizer/syncInfoUtils';
@@ -60,6 +62,22 @@ describe('NoteLockKeyMigration', () => {
 		await afterAllCleanUp();
 	});
 
+	it('should re-encrypt the attachments locked with the local key', async () => {
+		const note = await shim.attachFileToNote(await Note.save({ title: 'note' }), `${supportDir}/photo.jpg`);
+		await Note.save({ ...await Note.load(note.id, { useNoteLock: true }), is_locked: 1 }, { useNoteLock: true });
+		await NoteLockResource.update(note.id);
+		const resource = (await Resource.all())[0];
+		expect(await NoteLockResource.fileKeyId(resource)).toBe(decryptedLocalKey.id);
+
+		const result = await migrateLockedNotes(localPassword, targetPassword);
+
+		expect(result.failedResources).toBe(0);
+		expect(await NoteLockResource.fileKeyId(resource)).toBe(decryptedTargetKey.id);
+		const plainPath = `${Resource.fullPath(resource)}.check`;
+		await NoteLockResource.decryptFile(resource, plainPath, decryptedTargetKey);
+		expect(fileContentEqual(plainPath, `${supportDir}/photo.jpg`)).toBe(true);
+	});
+
 	it('should re-encrypt the notes locked with the local key and report the rest', async () => {
 		const note1 = await Note.save({ title: 'one', body: 'one', is_locked: 1 }, { useNoteLock: true });
 		const note2 = await Note.save({ title: 'two', body: 'two', is_locked: 1 }, { useNoteLock: true });
@@ -72,7 +90,7 @@ describe('NoteLockKeyMigration', () => {
 
 		const result = await withLogLevel(LogLevel.Error, () => migrateLockedNotes(localPassword, targetPassword));
 
-		expect(result).toEqual({ migrated: 2, skipped: 1, failed: 1, awaitingDecryption: 0, failedRevisions: 0 });
+		expect(result).toEqual({ migrated: 2, skipped: 1, failed: 1, failedResources: 0, awaitingDecryption: 0, failedRevisions: 0 });
 		expect(await bodyDecryptedWith(note1.id, decryptedTargetKey)).toBe('one');
 		expect(await bodyDecryptedWith(note2.id, decryptedTargetKey)).toBe('two');
 		expect((await Note.load(staleNote.id)).body).toBe(staleNote.body);
@@ -122,7 +140,7 @@ describe('NoteLockKeyMigration', () => {
 		await migrateLockedNotes(localPassword, targetPassword);
 		const bodiesAfterFirstRun = await storedBodies();
 
-		expect(await migrateLockedNotes(localPassword, targetPassword)).toEqual({ migrated: 0, skipped: 1, failed: 0, awaitingDecryption: 0, failedRevisions: 0 });
+		expect(await migrateLockedNotes(localPassword, targetPassword)).toEqual({ migrated: 0, skipped: 1, failed: 0, failedResources: 0, awaitingDecryption: 0, failedRevisions: 0 });
 		expect(await storedBodies()).toEqual(bodiesAfterFirstRun);
 	});
 
@@ -199,14 +217,14 @@ describe('NoteLockKeyMigration', () => {
 		expect(onStarted).toHaveBeenCalledTimes(1);
 		expect(dispatch.mock.calls).toEqual([
 			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: true, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } }],
-			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } }],
+			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, failedResources: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } }],
 		]);
 		expect(noteLockKeyConflict()).not.toBeNull();
 
 		await Note.delete(corruptNote.id);
 		dispatch.mockClear();
 		await startNoteLockKeyMigration(localPassword, targetPassword, dispatch, onStarted, false);
-		expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } });
+		expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, failedResources: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } });
 		expect(NoteLockKey.instance().load()).toEqual({ ...targetKey, syncMigrationId: targetSyncMigrationId });
 		expect(await bodyDecryptedWith(note.id, decryptedTargetKey)).toBe('one');
 	});
@@ -270,7 +288,7 @@ describe('NoteLockKeyMigration', () => {
 		const note = await Note.save({ title: 'one', body: 'one', is_locked: 1 }, { useNoteLock: true });
 		await db().exec('UPDATE notes SET user_updated_time = 1000, updated_time = 1000 WHERE id = ?', [note.id]);
 
-		expect(await migrateLockedNotes(localPassword, targetPassword)).toEqual({ migrated: 1, skipped: 0, failed: 0, awaitingDecryption: 0, failedRevisions: 0 });
+		expect(await migrateLockedNotes(localPassword, targetPassword)).toEqual({ migrated: 1, skipped: 0, failed: 0, failedResources: 0, awaitingDecryption: 0, failedRevisions: 0 });
 
 		const migrated = await Note.load(note.id);
 		expect(migrated.user_updated_time).toBe(1000);
@@ -286,7 +304,7 @@ describe('NoteLockKeyMigration', () => {
 
 		await startNoteLockKeyMigration(localPassword, targetPassword, dispatch, jest.fn(), false);
 
-		const status = { running: false, failed: 0, skipped: 0, awaitingDecryption: 1, failedRevisions: 0, reencrypt: false };
+		const status = { running: false, failed: 0, failedResources: 0, skipped: 0, awaitingDecryption: 1, failedRevisions: 0, reencrypt: false };
 		expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: status });
 		expect(noteLockKeyConflict()).not.toBeNull();
 		expect(notMigratedMessage(status)).toBe('1 locked note is still waiting to be decrypted and was not migrated yet.');

@@ -17,6 +17,7 @@ import { fileExtension } from '../../path-utils';
 import uuid from '../../uuid';
 import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 import NoteLockService from '../noteLock/NoteLockService';
+import NoteLockResource from '../noteLock/NoteLockResource';
 import NoteLockSession from '../noteLock/NoteLockSession';
 import NoteLockKey, { DecryptedNoteLockKey, noteLockKeyFileName } from '../noteLock/NoteLockKey';
 
@@ -45,6 +46,9 @@ export default class InteropService_Importer_Raw extends InteropService_Importer
 		// A backup with locked notes carries their encrypted key (see the raw exporter).
 		let importNoteLockKey: DecryptedNoteLockKey = null;
 		let undecryptableNotes = 0;
+		let undecryptableResources = 0;
+		// The notes saved here with the note lock, whose attachments are brought in line once everything is imported.
+		const relockedNoteIds: string[] = [];
 		if (isNoteLockEnabled() && await shim.fsDriver().exists(`${this.sourcePath_}/${noteLockKeyFileName}`)) {
 			const keyFile: MasterKeyEntity = JSON.parse(await shim.fsDriver().readFile(`${this.sourcePath_}/${noteLockKeyFileName}`));
 			const profileKeyId = NoteLockKey.instance().load()?.id;
@@ -164,6 +168,14 @@ export default class InteropService_Importer_Raw extends InteropService_Importer
 
 					if (await shim.fsDriver().exists(sourceResourcePath)) {
 						await shim.fsDriver().copy(sourceResourcePath, destPath);
+						// Its file is encrypted with the backup's key, which moves to the profile key like the notes.
+						if (isNoteLockEnabled() && item.is_locked && importNoteLockKey) {
+							try {
+								await NoteLockResource.changeFileKey(item, importNoteLockKey, profileNoteLockKey);
+							} catch {
+								undecryptableResources++;
+							}
+						}
 					} else {
 						result.warnings.push(sprintf('Could not find resource file: %s', sourceResourcePath));
 					}
@@ -182,7 +194,8 @@ export default class InteropService_Importer_Raw extends InteropService_Importer
 					continue;
 				}
 
-				await ItemClass.save(item, { isNew: true, autoTimestamp: false, useNoteLock: useNoteLockSave, noteLockKey: profileNoteLockKey });
+				await ItemClass.save(item, { isNew: true, autoTimestamp: false, useNoteLock: useNoteLockSave, noteLockKey: profileNoteLockKey, skipNoteLockResources: true });
+				if (useNoteLockSave) relockedNoteIds.push(item.id);
 			} catch (error) {
 				if (error.code === 'malformedItem') {
 					result.warnings.push(sprintf('Skipped malformed item: %s: %s', stat.path, error.message));
@@ -194,6 +207,11 @@ export default class InteropService_Importer_Raw extends InteropService_Importer
 		}
 
 		if (undecryptableNotes) result.warnings.push(`${undecryptableNotes} locked note(s) could not be unlocked with the provided key and were imported unchanged`);
+		if (undecryptableResources) result.warnings.push(`${undecryptableResources} locked attachment(s) could not be unlocked with the provided key and were imported unchanged`);
+
+		let failedResources = 0;
+		for (const noteId of relockedNoteIds) failedResources += await NoteLockResource.update(noteId, profileNoteLockKey);
+		if (failedResources) result.warnings.push(`${failedResources} attachment(s) of the imported locked notes could not be locked`);
 
 		for (let i = 0; i < noteTagsToCreate.length; i++) {
 			const noteTag = noteTagsToCreate[i];

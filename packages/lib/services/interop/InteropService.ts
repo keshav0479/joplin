@@ -4,6 +4,7 @@ import { _, _n } from '../../locale';
 import BaseItem from '../../models/BaseItem';
 import BaseModel, { ModelType } from '../../BaseModel';
 import Resource from '../../models/Resource';
+import Setting from '../../models/Setting';
 import Folder from '../../models/Folder';
 import NoteTag from '../../models/NoteTag';
 import Note from '../../models/Note';
@@ -409,6 +410,8 @@ export default class InteropService {
 		// Backups keep locked notes encrypted; other formats export them decrypted only when decryptLockedNotes is set.
 		const keepsLockedNotes = options.format === ExportModuleOutputFormat.Raw || options.format === ExportModuleOutputFormat.Jex;
 		let lockedNotesSkipped = 0;
+		let lockedResourcesSkipped = 0;
+		const decryptedResourcePaths: string[] = [];
 		// Read once, so enabling the feature partway through cannot leave the locked notes queued before it as ciphertext.
 		// Turning it off partway is caught by the gated load in decryptedNoteForExport_.
 		const noteLockEnabled = isNoteLockEnabled();
@@ -541,7 +544,17 @@ export default class InteropService {
 
 				try {
 					if (itemType === BaseModel.TYPE_RESOURCE) {
-						const resourcePath = Resource.fullPath(item);
+						let resourcePath = Resource.fullPath(item);
+						// Backups keep the encrypted file. Other formats need the plain one, which needs the key.
+						if (noteLockEnabled && item.is_locked && !keepsLockedNotes) {
+							if (!noteLockKey) {
+								lockedResourcesSkipped++;
+								continue;
+							}
+							resourcePath = `${Setting.value('tempDir')}/${Resource.filename(item)}`;
+							await NoteLockResource.decryptFile(item, resourcePath, noteLockKey);
+							decryptedResourcePaths.push(resourcePath);
+						}
 						context.resourcePaths[item.id] = resourcePath;
 						exporter.updateContext(context);
 						await exporter.processResource(item, resourcePath);
@@ -560,6 +573,8 @@ export default class InteropService {
 
 		options.onProgress?.(ExportProgressState.Closing, null);
 		await exporter.close();
+		for (const path of decryptedResourcePaths) await shim.fsDriver().remove(path);
+		if (lockedResourcesSkipped) result.warnings.push(`${lockedResourcesSkipped} locked attachment(s) could not be unlocked and were not exported`);
 
 		if (lockedNotesSkipped) result.warnings.push(`${lockedNotesSkipped} locked note(s) could not be unlocked and were not exported`);
 

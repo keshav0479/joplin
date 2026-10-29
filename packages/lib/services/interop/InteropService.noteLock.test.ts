@@ -8,7 +8,8 @@ import NoteLockKey, { noteLockKeyFileName, syncedNoteLockKeyFileName } from '../
 import NoteLockService from '../noteLock/NoteLockService';
 import NoteLockSession from '../noteLock/NoteLockSession';
 import Resource from '../../models/Resource';
-import { createNoteAndResource, encryptionService, exportDir, setupDatabaseAndSynchronizer, switchClient } from '../../testing/test-utils';
+import { createNoteAndResource, encryptionService, exportDir, fileContentEqual, setupDatabaseAndSynchronizer, supportDir, switchClient } from '../../testing/test-utils';
+import NoteLockResource from '../noteLock/NoteLockResource';
 import shim from '../../shim';
 import * as fs from 'fs-extra';
 
@@ -95,6 +96,62 @@ describe('InteropService.noteLock', () => {
 		expect(result.warnings).toEqual([]);
 		// The database row stays encrypted, only the exported copy is decrypted.
 		expect((await Note.load(note.id)).body).not.toContain('secret');
+	});
+
+	it('should md export the plain file of a locked attachment and leave the stored one encrypted', async () => {
+		await setUpUnlockedSession();
+		const folder = await Folder.save({ title: 'folder' });
+		const { note, resource } = await createNoteAndResource({ parentId: folder.id });
+		await lockNote(note.id);
+		await NoteLockResource.update(note.id);
+		expect((await Resource.load(resource.id)).is_locked).toBe(1);
+
+		const result = await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Markdown, decryptLockedNotes: true });
+
+		expect(result.warnings).toEqual([]);
+		const exportedResources = await fs.readdir(`${exportDir()}/_resources`);
+		expect(exportedResources.length).toBe(1);
+		expect(fileContentEqual(`${exportDir()}/_resources/${exportedResources[0]}`, `${supportDir}/photo.jpg`)).toBe(true);
+		expect(fileContentEqual(Resource.fullPath(resource), `${supportDir}/photo.jpg`)).toBe(false);
+	});
+
+	it('should skip a locked attachment in an md export when the session is locked', async () => {
+		await setUpUnlockedSession();
+		const folder = await Folder.save({ title: 'folder' });
+		const { note, resource } = await createNoteAndResource({ parentId: folder.id });
+		await lockNote(note.id);
+		await NoteLockResource.update(note.id);
+		const plainNote = await Note.save({ title: 'plain', body: Resource.markdownTag(resource), parent_id: folder.id });
+		NoteLockSession.instance().lock();
+
+		const result = await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Markdown, sourceNoteIds: [plainNote.id] });
+
+		expect(result.warnings).toEqual(['1 locked attachment(s) could not be unlocked and were not exported']);
+	});
+
+	it('should re-encrypt the locked attachments of an import for this profile', async () => {
+		await setUpUnlockedSession('old password');
+		const folder = await Folder.save({ title: 'folder' });
+		const { note, resource } = await createNoteAndResource({ parentId: folder.id });
+		await lockNote(note.id);
+		await NoteLockResource.update(note.id);
+		await InteropService.instance().export({ path: exportDir(), format: ExportModuleOutputFormat.Raw });
+
+		await rotateProfileKey('new password');
+
+		const result = await InteropService.instance().import({
+			path: exportDir(),
+			format: 'raw',
+			onNoteLockKey: keyFile => NoteLockKey.instance().decrypt('old password', keyFile),
+		});
+
+		expect(result.warnings).toEqual([]);
+		const imported = (await Resource.all()).find(r => r.id !== resource.id);
+		expect(imported.is_locked).toBe(1);
+		expect(await NoteLockResource.fileKeyId(imported)).toBe(NoteLockKey.instance().load().id);
+		const plainPath = `${exportDir()}/check.jpg`;
+		await NoteLockResource.decryptFile(imported, plainPath, NoteLockSession.instance().decryptedKey());
+		expect(fileContentEqual(plainPath, `${supportDir}/photo.jpg`)).toBe(true);
 	});
 
 	const saveLockedNotes = async (folderId: string, titles: string[]) => {
