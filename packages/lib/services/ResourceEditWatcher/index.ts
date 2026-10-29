@@ -10,6 +10,7 @@ import { EventEmitter } from 'events';
 import * as chokidar from 'chokidar';
 import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 import NoteLockService from '../noteLock/NoteLockService';
+import NoteLockResourceCache from '../noteLock/NoteLockResourceCache';
 
 type WindowId = string;
 
@@ -224,7 +225,12 @@ export default class ResourceEditWatcher {
 	}
 
 	private async makeEditPath(resource: ResourceEntity) {
-		const tempDir = await this.tempDir();
+		let tempDir = await this.tempDir();
+		// The plain copy of a locked attachment goes with the decrypted copies, which are removed when the session locks.
+		if (isNoteLockEnabled() && resource.is_locked) {
+			tempDir = NoteLockResourceCache.dir();
+			await shim.fsDriver().mkdir(tempDir);
+		}
 		return toSystemSlashes(await shim.fsDriver().findUniqueFilename(`${tempDir}/${Resource.friendlySafeFilename(resource)}`), 'linux');
 	}
 
