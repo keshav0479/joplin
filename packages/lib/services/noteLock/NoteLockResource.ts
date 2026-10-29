@@ -57,6 +57,13 @@ const usedByOtherNotes = async (resourceIds: string[], noteId: string, otherNote
 	return rows.map(r => r.resource_id as string);
 };
 
+// The web file system cannot move a file, so there the new file is copied over the old one.
+const replaceFile = async (srcPath: string, destPath: string) => {
+	if (shim.mobilePlatform() !== 'web') return shim.fsDriver().move(srcPath, destPath);
+	await shim.fsDriver().copy(srcPath, destPath);
+	await shim.fsDriver().remove(srcPath);
+};
+
 // The file is written first and the row after, so an interrupted run leaves an encrypted file
 // with is_locked = 0, which the header check picks up on the next run.
 const saveLockState = async (resource: ResourceEntity, isLocked: boolean, transform: (srcPath: string, destPath: string)=> Promise<unknown>) => {
@@ -64,7 +71,7 @@ const saveLockState = async (resource: ResourceEntity, isLocked: boolean, transf
 	if (await fileHasNoteLockHeader(path) !== isLocked) {
 		const tempPath = `${path}.tmp`;
 		await transform(path, tempPath);
-		await shim.fsDriver().move(tempPath, path);
+		await replaceFile(tempPath, path);
 	}
 
 	const now = Date.now();
