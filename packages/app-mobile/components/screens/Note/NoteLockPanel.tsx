@@ -96,7 +96,7 @@ const NoteLockPanel = (props: Props) => {
 
 	const renderForm = () => {
 		if (props.migrationRunning) {
-			return <Text style={styles.message}>{_('This note cannot be read while a note lock key migration is in progress.')}</Text>;
+			return <Text style={styles.message}>{_('This note cannot be read while a migration is in progress.')}</Text>;
 		}
 
 		if (props.undecryptable) {

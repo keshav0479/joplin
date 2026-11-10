@@ -25,7 +25,7 @@ import TaskQueue from './TaskQueue';
 import ItemUploader from './services/synchronizer/ItemUploader';
 import { FileApi, getSupportsDeltaWithItems, isLocalServer, PaginatedList, RemoteItem, enableEnhancedBasicDeltaAlgorithm } from './file-api';
 import JoplinDatabase from './JoplinDatabase';
-import { parkedNoteLockKeyInUse } from './services/noteLock/NoteLockKeyMigration';
+import { checkNoteLockReencryptFinished, parkedNoteLockKeyInUse } from './services/noteLock/NoteLockKeyMigration';
 import NoteLockSession from './services/noteLock/NoteLockSession';
 import { checkIfCanSync, fetchSyncInfo, checkSyncTargetIsValid, getActiveMasterKey, localSyncInfo, mergeSyncInfos, saveLocalSyncInfo, setMasterKeyHasBeenUsed, SyncInfo, syncInfoEquals, uploadSyncInfo, checkNoteLockKeyConflict, checkNoteLockKeyMigrationId, checkNoteLockKeyUnchanged, checkRemoteNoteLockKeyUnchanged, noteLockKeyConflict } from './services/synchronizer/syncInfoUtils';
 import { getMasterPassword, setupAndDisableEncryption, setupAndEnableEncryption } from './services/e2ee/utils';
@@ -504,6 +504,7 @@ export default class Synchronizer {
 				// a note lock key or run a migration: it adopts the target's key, and a migration it would need (its locked notes
 				// meeting a different key, for example after switching the sync target) stops its sync. Revisit if it gains these.
 				checkNoteLockKeyMigrationId(localSyncInfo(), remoteInfo);
+				checkNoteLockReencryptFinished();
 
 				let syncTargetIsNew = false;
 
