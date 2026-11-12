@@ -38,6 +38,7 @@ interface Props {
 	hasDisabledSyncItems: boolean;
 	showUnknownKeyFormatMessage: boolean;
 	showMissingMasterKeyMessage: boolean;
+	noteLockBulkChangeRunning: boolean;
 	showNoteLockKeyConflictMessage: boolean;
 	noteLockReencryptPending: boolean;
 	noteLockMigrationStatus: NoteLockMigrationStatus|null;
@@ -175,6 +176,8 @@ const WarningBanner: React.FC<Props> = props => {
 			_('Set the password'),
 			onViewSyncSettingsScreen,
 		);
+	} else if (props.noteLockBulkChangeRunning) {
+		msg = renderNotificationMessage(_('Applying note lock changes. Please wait…'));
 	} else if (props.noteLockMigrationStatus?.running) {
 		msg = renderNotificationMessage(_('Re-encrypting your locked notes. Migration is in progress...'));
 	} else if (props.noteLockMigrationStatus?.failed || props.noteLockMigrationStatus?.awaitingDecryption || props.noteLockMigrationStatus?.failedRevisions) {
@@ -365,6 +368,7 @@ const mapStateToProps = (state: AppState) => {
 		shareInvitations: state.shareService.shareInvitations,
 		processingShareInvitationResponse: state.shareService.processingShareInvitationResponse,
 		isSafeMode: state.settings.isSafeMode,
+		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning,
 		mustUpgradeAppMessage: state.mustUpgradeAppMessage,
 		syncTargetAppMinVersion: state.mustUpgradeAppMinVersion,
 		showInvalidJoplinCloudCredential: state.settings['sync.target'] === 10 && state.mustAuthenticate,
