@@ -111,7 +111,7 @@ describe('NoteLockKeyMigration', () => {
 		await withLogLevel(LogLevel.Error, () => startNoteLockKeyMigration(localPassword, targetPassword, dispatch, jest.fn(), false));
 
 		const status = dispatch.mock.calls[dispatch.mock.calls.length - 1][0].value;
-		expect(status).toEqual({ running: false, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 1, reencrypt: false });
+		expect(status).toEqual({ running: false, failed: 0, failedResources: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 1, reencrypt: false });
 		expect(notMigratedMessage(status)).toBe('1 note history version of a locked note could not be migrated.');
 		expect(noteLockKeyConflict()).not.toBeNull();
 		const migratedRevision = await Revision.load(revision.id);

@@ -314,7 +314,7 @@ describe('bulkSetNoteLockState', () => {
 		await db().exec('UPDATE notes SET body = ? WHERE id = ?', ['JLD01undecryptable', sharedNote.id]);
 		const cleanup = simulateReadOnlyShareEnv('share-1');
 		try {
-			expect(await bulkSetNoteLockState([sharedNote.id], false)).toEqual({ changed: 0, skipped: 1, failed: 0 });
+			expect(await bulkSetNoteLockState([sharedNote.id], false)).toEqual({ changed: 0, skipped: 1, failed: 0, failedResources: 0 });
 		} finally {
 			cleanup();
 		}
