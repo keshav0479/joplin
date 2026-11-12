@@ -56,7 +56,7 @@ export default function NoteLockPanel(props: Props) {
 
 	const renderAction = () => {
 		if (props.migrationRunning) {
-			return <p className="message">{_('This note cannot be read while a note lock key migration is in progress.')}</p>;
+			return <p className="message">{_('This note cannot be read while a migration is in progress.')}</p>;
 		}
 
 		if (props.undecryptable) {

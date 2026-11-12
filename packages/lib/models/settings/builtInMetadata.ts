@@ -2391,6 +2391,12 @@ const builtInMetadata = (Setting: typeof SettingType) => {
 			public: false,
 		},
 
+		'noteLock.reencryptPending': {
+			value: false,
+			type: SettingItemType.Bool,
+			public: false,
+		},
+
 		'featureFlag.autoUpdaterServiceEnabled': {
 			value: false,
 			type: SettingItemType.Bool,

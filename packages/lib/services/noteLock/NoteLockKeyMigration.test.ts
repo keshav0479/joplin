@@ -3,14 +3,14 @@ import Note from '../../models/Note';
 import uuid from '../../uuid';
 import { afterAllCleanUp, db, encryptionService, revisionService, setupDatabaseAndSynchronizer, switchClient, withLogLevel } from '../../testing/test-utils';
 import Revision from '../../models/Revision';
-import EncryptionService from '../e2ee/EncryptionService';
+import EncryptionService, { EncryptionMethod } from '../e2ee/EncryptionService';
 import { MasterKeyEntity } from '../e2ee/types';
 import { localSyncInfo, noteLockKeyConflict } from '../synchronizer/syncInfoUtils';
 import NoteLockKey, { DecryptedNoteLockKey } from './NoteLockKey';
 import NoteLockNote from './NoteLockNote';
 import NoteLockService from './NoteLockService';
 import NoteLockSession from './NoteLockSession';
-import { confirmAndSkipNoteLockKeyMigration, finishNoteLockKeyMigration, migrateLockedNotes, notMigratedMessage, startNoteLockKeyMigration } from './NoteLockKeyMigration';
+import { checkNoteLockReencryptFinished, confirmAndSkipNoteLockKeyMigration, confirmAndSkipNoteLockReencrypt, finishNoteLockKeyMigration, migrateLockedNotes, notMigratedMessage, reencryptLockedNotes, startNoteLockKeyMigration, startNoteLockReencrypt } from './NoteLockKeyMigration';
 import eventManager, { EventName, NoteLockSessionChangeEvent } from '../../eventManager';
 import shim from '../../shim';
 import { LogLevel } from '@joplin/utils/Logger';
@@ -93,7 +93,7 @@ describe('NoteLockKeyMigration', () => {
 		await withLogLevel(LogLevel.Error, () => startNoteLockKeyMigration(localPassword, targetPassword, dispatch, jest.fn(), false));
 
 		const status = dispatch.mock.calls[dispatch.mock.calls.length - 1][0].value;
-		expect(status).toEqual({ running: false, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 1 });
+		expect(status).toEqual({ running: false, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 1, reencrypt: false });
 		expect(notMigratedMessage(status)).toBe('1 note history version of a locked note could not be migrated.');
 		expect(noteLockKeyConflict()).not.toBeNull();
 		const migratedRevision = await Revision.load(revision.id);
@@ -198,15 +198,15 @@ describe('NoteLockKeyMigration', () => {
 		await withLogLevel(LogLevel.Error, () => startNoteLockKeyMigration(localPassword, targetPassword, dispatch, onStarted, false));
 		expect(onStarted).toHaveBeenCalledTimes(1);
 		expect(dispatch.mock.calls).toEqual([
-			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: true, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0 } }],
-			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, skipped: 0, awaitingDecryption: 0, failedRevisions: 0 } }],
+			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: true, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } }],
+			[{ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } }],
 		]);
 		expect(noteLockKeyConflict()).not.toBeNull();
 
 		await Note.delete(corruptNote.id);
 		dispatch.mockClear();
 		await startNoteLockKeyMigration(localPassword, targetPassword, dispatch, onStarted, false);
-		expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0 } });
+		expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: false } });
 		expect(NoteLockKey.instance().load()).toEqual({ ...targetKey, syncMigrationId: targetSyncMigrationId });
 		expect(await bodyDecryptedWith(note.id, decryptedTargetKey)).toBe('one');
 	});
@@ -235,7 +235,7 @@ describe('NoteLockKeyMigration', () => {
 			await withLogLevel(LogLevel.Error, () => startNoteLockKeyMigration(localPassword, targetPassword, dispatch, jest.fn(), false));
 
 			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: null });
-			expect(showErrorDialog).toHaveBeenCalledWith('The note lock key migration was cancelled because the note lock feature was turned off.');
+			expect(showErrorDialog).toHaveBeenCalledWith('The migration of your locked notes was cancelled because the note lock feature was turned off.');
 			expect(noteLockKeyConflict()).not.toBeNull();
 		} finally {
 			saveSpy.mockRestore();
@@ -253,8 +253,8 @@ describe('NoteLockKeyMigration', () => {
 			resetDuringRun = NoteLockSession.instance().reset('333333').then((): Error => null, (error: Error) => error);
 		});
 
-		expect((await unlockDuringRun)?.message).toContain('note lock key migration is in progress');
-		expect((await resetDuringRun)?.message).toContain('cannot be reset while a note lock key migration is in progress');
+		expect((await unlockDuringRun)?.message).toContain('while a migration is in progress');
+		expect((await resetDuringRun)?.message).toContain('cannot be reset while a migration is in progress');
 		await NoteLockSession.instance().unlock(localPassword);
 		expect(NoteLockSession.instance().isUnlocked()).toBe(true);
 	});
@@ -286,10 +286,84 @@ describe('NoteLockKeyMigration', () => {
 
 		await startNoteLockKeyMigration(localPassword, targetPassword, dispatch, jest.fn(), false);
 
-		const status = { running: false, failed: 0, skipped: 0, awaitingDecryption: 1, failedRevisions: 0 };
+		const status = { running: false, failed: 0, skipped: 0, awaitingDecryption: 1, failedRevisions: 0, reencrypt: false };
 		expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: status });
 		expect(noteLockKeyConflict()).not.toBeNull();
 		expect(notMigratedMessage(status)).toBe('1 locked note is still waiting to be decrypted and was not migrated yet.');
+	});
+
+	describe('re-encryption', () => {
+
+		// Notes saved meanwhile use an older encryption method, as they would have before a newer one was released.
+		const withOlderMethod = async <T>(callback: ()=> Promise<T>) => {
+			EncryptionService.instance().defaultEncryptionMethod_ = EncryptionMethod.SJCL1a;
+			try {
+				return await callback();
+			} finally {
+				EncryptionService.instance().defaultEncryptionMethod_ = EncryptionMethod.StringV1;
+			}
+		};
+
+		const methodOf = async (cipherText: string) => (await EncryptionService.instance().decodeHeaderString(cipherText, true)).encryptionMethod;
+
+		beforeEach(() => {
+			Setting.setValue('noteLock.conflictNoteLockKey', {});
+		});
+
+		afterEach(() => {
+			Setting.setValue('noteLock.reencryptPending', false);
+		});
+
+		it('should re-encrypt only the notes and history still on an older encryption method', async () => {
+			const { oldNote, revision } = await withOlderMethod(async () => {
+				const oldNote = await Note.save({ title: 'old', body: 'old', is_locked: 1 }, { useNoteLock: true });
+				return { oldNote, revision: await revisionService().createNoteRevision_(await Note.load(oldNote.id), null, true) };
+			});
+			const currentNote = await Note.save({ title: 'current', body: 'current', is_locked: 1 }, { useNoteLock: true });
+			const currentBody = (await Note.load(currentNote.id)).body;
+			await noteLockedWith(await decryptKey(await generateKey('333333'), '333333'), 'stale');
+			const dispatch = jest.fn();
+
+			await startNoteLockReencrypt(localPassword, dispatch, jest.fn(), false);
+
+			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, skipped: 1, awaitingDecryption: 0, failedRevisions: 0, reencrypt: true } });
+			expect(await methodOf((await Note.load(oldNote.id)).body)).toBe(EncryptionMethod.StringV1);
+			expect(await bodyDecryptedWith(oldNote.id, decryptedLocalKey)).toBe('old');
+			expect(await methodOf(Revision.applyTextPatch('', (await Revision.load(revision.id)).body_diff))).toBe(EncryptionMethod.StringV1);
+			expect((await Note.load(currentNote.id)).body).toBe(currentBody);
+			expect(NoteLockKey.instance().load().id).toBe(decryptedLocalKey.id);
+			expect(Setting.value('noteLock.reencryptPending')).toBe(false);
+		});
+
+		it('should keep sync blocked after a run with issues until it is skipped', async () => {
+			const corruptNote = await withOlderMethod(async () => {
+				const note = await Note.save({ title: 'corrupt', body: 'corrupt', is_locked: 1 }, { useNoteLock: true });
+				return Note.save({ id: note.id, body: `${(await Note.load(note.id)).body.slice(0, -8)}xxxxxxxx` });
+			});
+			let pendingWhileRunning = false;
+			const dispatch = jest.fn();
+
+			await withLogLevel(LogLevel.Error, () => startNoteLockReencrypt(localPassword, dispatch, () => {
+				pendingWhileRunning = Setting.value('noteLock.reencryptPending');
+			}, false));
+
+			expect(pendingWhileRunning).toBe(true);
+			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: true } });
+			expect(() => checkNoteLockReencryptFinished()).toThrow('re-encryption of your locked notes');
+
+			const showMessageBox = jest.spyOn(shim, 'showMessageBox').mockResolvedValue(0);
+			expect(await confirmAndSkipNoteLockReencrypt(dispatch)).toBe(true);
+			expect(showMessageBox.mock.calls[0][0]).toBe('Are you sure you want to skip re-encrypting the remaining locked notes?');
+			expect(() => checkNoteLockReencryptFinished()).not.toThrow();
+			expect((await Note.load(corruptNote.id)).body).toBe(corruptNote.body);
+			showMessageBox.mockRestore();
+		});
+
+		it('should not run while a note lock key migration is needed', async () => {
+			Setting.setValue('noteLock.conflictNoteLockKey', { noteLockKey: { ...targetKey, syncMigrationId: targetSyncMigrationId } });
+
+			await expect(reencryptLockedNotes(localPassword)).rejects.toThrow('while a migration is in progress');
+		});
 	});
 
 });

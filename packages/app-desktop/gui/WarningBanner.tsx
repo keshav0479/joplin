@@ -18,7 +18,8 @@ import EncryptionService from '@joplin/lib/services/e2ee/EncryptionService';
 import { showMissingMasterKeyMessage, showUnknownKeyFormatBanner } from '@joplin/lib/services/e2ee/utils';
 import { noteLockKeyConflictFromState } from '@joplin/lib/services/synchronizer/syncInfoUtils';
 import { NoteLockMigrationStatus } from '@joplin/lib/reducer';
-import { confirmAndSkipNoteLockKeyMigration, notMigratedMessage, withSkippedCount } from '@joplin/lib/services/noteLock/NoteLockKeyMigration';
+import { confirmAndSkipNoteLockKeyMigration, confirmAndSkipNoteLockReencrypt, notMigratedMessage, withSkippedCount } from '@joplin/lib/services/noteLock/NoteLockKeyMigration';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import shouldShowMissingPasswordWarning from '@joplin/lib/components/shared/config/shouldShowMissingPasswordWarning';
 import { connect } from 'react-redux';
 
@@ -39,6 +40,7 @@ interface Props {
 	showMissingMasterKeyMessage: boolean;
 	noteLockBulkChangeRunning: boolean;
 	showNoteLockKeyConflictMessage: boolean;
+	noteLockReencryptPending: boolean;
 	noteLockMigrationStatus: NoteLockMigrationStatus|null;
 	mustUpgradeAppMessage: string;
 	syncTargetAppMinVersion: string;
@@ -87,6 +89,17 @@ const WarningBanner: React.FC<Props> = props => {
 			type: 'DIALOG_OPEN',
 			name: 'noteLockMigration',
 		});
+	};
+
+	const onReencryptLockedNotes = () => {
+		props.dispatch({
+			type: 'DIALOG_OPEN',
+			name: 'noteLockReencrypt',
+		});
+	};
+
+	const onSkipNoteLockReencrypt = () => {
+		void confirmAndSkipNoteLockReencrypt(props.dispatch);
 	};
 
 	const onDismissNoteLockMigrationStatus = () => {
@@ -166,20 +179,30 @@ const WarningBanner: React.FC<Props> = props => {
 	} else if (props.noteLockBulkChangeRunning) {
 		msg = renderNotificationMessage(_('Applying note lock changes. Please wait…'));
 	} else if (props.noteLockMigrationStatus?.running) {
-		msg = renderNotificationMessage(_('Re-encrypting your locked notes with the synced key. Migration is in progress...'));
+		msg = renderNotificationMessage(_('Re-encrypting your locked notes. Migration is in progress...'));
 	} else if (props.noteLockMigrationStatus?.failed || props.noteLockMigrationStatus?.awaitingDecryption || props.noteLockMigrationStatus?.failedRevisions) {
+		const reencrypt = props.noteLockMigrationStatus.reencrypt;
 		msg = renderNotificationMessage(
 			notMigratedMessage(props.noteLockMigrationStatus),
 			_('Retry'),
-			onMigrateLockedNotes,
+			reencrypt ? onReencryptLockedNotes : onMigrateLockedNotes,
 			_('Skip'),
-			() => void confirmAndSkipNoteLockKeyMigration(props.dispatch),
+			reencrypt ? onSkipNoteLockReencrypt : () => void confirmAndSkipNoteLockKeyMigration(props.dispatch),
 		);
 	} else if (props.noteLockMigrationStatus) {
 		msg = renderNotificationMessage(
 			withSkippedCount(_('The migration of your locked notes has completed.'), props.noteLockMigrationStatus),
 			_('Dismiss'),
 			onDismissNoteLockMigrationStatus,
+		);
+	} else if (props.noteLockReencryptPending) {
+		// The run left notes behind before the app was restarted, which drops the run's own status.
+		msg = renderNotificationMessage(
+			_('The re-encryption of your locked notes has not finished. Synchronisation is disabled until it is finished or skipped.'),
+			_('Retry'),
+			onReencryptLockedNotes,
+			_('Skip'),
+			onSkipNoteLockReencrypt,
 		);
 	} else if (props.showNoteLockKeyConflictMessage) {
 		msg = renderNotificationMessage(
@@ -336,6 +359,7 @@ const mapStateToProps = (state: AppState) => {
 		showMissingMasterKeyMessage: showMissingMasterKeyMessage(syncInfo, state.notLoadedMasterKeys),
 		showUnknownKeyFormatMessage: showUnknownKeyFormatBanner(syncInfo),
 		showNoteLockKeyConflictMessage: noteLockKeyConflictFromState(state),
+		noteLockReencryptPending: isNoteLockEnabled() && state.settings['noteLock.reencryptPending'],
 		noteLockMigrationStatus: state.noteLockMigrationStatus,
 		showNeedUpgradingMasterKeyMessage: showNeedUpgradingEnabledMasterKeyMessage,
 		showShouldReencryptMessage: state.settings['encryption.shouldReencrypt'] >= Setting.SHOULD_REENCRYPT_YES,
