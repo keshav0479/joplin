@@ -164,8 +164,8 @@ export default class NoteLockResource {
 	}
 
 	// The id of the key a locked attachment's file is encrypted with.
-	public static async fileKeyId(resource: ResourceEntity) {
-		return (await EncryptionService.instance().decodeHeaderString(await readFileStart(Resource.fullPath(resource)), true)).masterKeyId as string;
+	public static async fileHeader(resource: ResourceEntity) {
+		return EncryptionService.instance().decodeHeaderString(await readFileStart(Resource.fullPath(resource)), true);
 	}
 
 	// For work that needs the plain file of a locked attachment, such as an export, without unlocking it.

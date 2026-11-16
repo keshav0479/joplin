@@ -67,12 +67,12 @@ describe('NoteLockKeyMigration', () => {
 		await Note.save({ ...await Note.load(note.id, { useNoteLock: true }), is_locked: 1 }, { useNoteLock: true });
 		await NoteLockResource.update(note.id);
 		const resource = (await Resource.all())[0];
-		expect(await NoteLockResource.fileKeyId(resource)).toBe(decryptedLocalKey.id);
+		expect((await NoteLockResource.fileHeader(resource)).masterKeyId).toBe(decryptedLocalKey.id);
 
 		const result = await migrateLockedNotes(localPassword, targetPassword);
 
 		expect(result.failedResources).toBe(0);
-		expect(await NoteLockResource.fileKeyId(resource)).toBe(decryptedTargetKey.id);
+		expect((await NoteLockResource.fileHeader(resource)).masterKeyId).toBe(decryptedTargetKey.id);
 		const plainPath = `${Resource.fullPath(resource)}.check`;
 		await NoteLockResource.decryptFile(resource, plainPath, decryptedTargetKey);
 		expect(fileContentEqual(plainPath, `${supportDir}/photo.jpg`)).toBe(true);
@@ -344,13 +344,40 @@ describe('NoteLockKeyMigration', () => {
 
 			await startNoteLockReencrypt(localPassword, dispatch, jest.fn(), false);
 
-			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, skipped: 1, awaitingDecryption: 0, failedRevisions: 0, reencrypt: true } });
+			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 0, failedResources: 0, skipped: 1, awaitingDecryption: 0, failedRevisions: 0, reencrypt: true } });
 			expect(await methodOf((await Note.load(oldNote.id)).body)).toBe(EncryptionMethod.StringV1);
 			expect(await bodyDecryptedWith(oldNote.id, decryptedLocalKey)).toBe('old');
 			expect(await methodOf(Revision.applyTextPatch('', (await Revision.load(revision.id)).body_diff))).toBe(EncryptionMethod.StringV1);
 			expect((await Note.load(currentNote.id)).body).toBe(currentBody);
 			expect(NoteLockKey.instance().load().id).toBe(decryptedLocalKey.id);
 			expect(Setting.value('noteLock.reencryptPending')).toBe(false);
+		});
+
+		it('should re-encrypt only the attachments still on an older file encryption method', async () => {
+			const lockedAttachment = async (title: string) => {
+				const note = await shim.attachFileToNote(await Note.save({ title }), `${supportDir}/photo.jpg`);
+				await Note.save({ ...await Note.load(note.id, { useNoteLock: true }), is_locked: 1 }, { useNoteLock: true });
+				await NoteLockResource.update(note.id);
+				return (await Resource.all()).find(resource => note.body.includes(resource.id));
+			};
+			EncryptionService.instance().defaultFileEncryptionMethod_ = EncryptionMethod.SJCL1a;
+			let oldResource;
+			try {
+				oldResource = await lockedAttachment('old');
+			} finally {
+				EncryptionService.instance().defaultFileEncryptionMethod_ = EncryptionMethod.FileV1;
+			}
+			const currentResource = await lockedAttachment('current');
+			const currentFile = await shim.fsDriver().readFile(Resource.fullPath(currentResource));
+			expect((await NoteLockResource.fileHeader(oldResource)).encryptionMethod).toBe(EncryptionMethod.SJCL1a);
+
+			await startNoteLockReencrypt(localPassword, jest.fn(), jest.fn(), false);
+
+			expect((await NoteLockResource.fileHeader(oldResource)).encryptionMethod).toBe(EncryptionMethod.FileV1);
+			const plainPath = `${Resource.fullPath(oldResource)}.check`;
+			await NoteLockResource.decryptFile(oldResource, plainPath, decryptedLocalKey);
+			expect(fileContentEqual(plainPath, `${supportDir}/photo.jpg`)).toBe(true);
+			expect(await shim.fsDriver().readFile(Resource.fullPath(currentResource))).toBe(currentFile);
 		});
 
 		it('should keep sync blocked after a run with issues until it is skipped', async () => {
@@ -366,7 +393,7 @@ describe('NoteLockKeyMigration', () => {
 			}, false));
 
 			expect(pendingWhileRunning).toBe(true);
-			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: true } });
+			expect(dispatch).toHaveBeenLastCalledWith({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: 1, failedResources: 0, skipped: 0, awaitingDecryption: 0, failedRevisions: 0, reencrypt: true } });
 			expect(() => checkNoteLockReencryptFinished()).toThrow('re-encryption of your locked notes');
 
 			const showMessageBox = jest.spyOn(shim, 'showMessageBox').mockResolvedValue(0);

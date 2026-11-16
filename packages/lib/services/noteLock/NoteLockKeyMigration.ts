@@ -19,9 +19,10 @@ import NoteLockService from './NoteLockService';
 
 const logger = Logger.create('NoteLockKeyMigration');
 
-// The files of locked attachments are encrypted with the local key too, so they move to the target key like the notes.
-// One under neither key was already unreadable here and is left as it is.
-const migrateLockedResources = async (localKey: DecryptedNoteLockKey, targetKey: DecryptedNoteLockKey, result: NoteLockKeyMigrationResult) => {
+// The files of locked attachments are encrypted with the local key too, so they move to the target key like the notes, and
+// a re-encryption moves the ones still on an older file encryption method. One under neither key was already unreadable here
+// and is left as it is.
+const migrateLockedResources = async (localKey: DecryptedNoteLockKey, targetKey: DecryptedNoteLockKey, reencrypt: boolean, result: NoteLockKeyMigrationResult) => {
 	const resources: ResourceEntity[] = await Resource.modelSelectAll('SELECT id, mime, file_extension, encryption_blob_encrypted FROM resources WHERE is_locked = 1');
 	for (const resource of resources) {
 		try {
@@ -31,7 +32,9 @@ const migrateLockedResources = async (localKey: DecryptedNoteLockKey, targetKey:
 			}
 			// One that is not downloaded comes from the sync target, so it is not under the local key.
 			if ((await Resource.localState(resource)).fetch_status !== Resource.FETCH_STATUS_DONE) continue;
-			if (await NoteLockResource.fileKeyId(resource) !== localKey.id) continue;
+			const header = await NoteLockResource.fileHeader(resource);
+			if (header.masterKeyId !== localKey.id) continue;
+			if (reencrypt && header.encryptionMethod === EncryptionService.instance().defaultFileEncryptionMethod()) continue;
 			await NoteLockResource.changeFileKey(resource, localKey, targetKey);
 			// The new file has to sync, like the re-encrypted notes.
 			const now = Date.now();
@@ -114,7 +117,7 @@ const runMigration = async (localKey: DecryptedNoteLockKey, targetKey: Decrypted
 			}
 			if (!isNoteLockEnabled()) throw new Error(_('The migration of your locked notes was cancelled because the note lock feature was turned off.'));
 		}
-		await migrateLockedResources(localKey, targetKey, result);
+		await migrateLockedResources(localKey, targetKey, reencrypt, result);
 	} finally {
 		NoteLockSession.instance().setMigrating(false);
 	}

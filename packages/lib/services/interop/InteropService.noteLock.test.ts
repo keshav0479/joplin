@@ -148,7 +148,7 @@ describe('InteropService.noteLock', () => {
 		expect(result.warnings).toEqual([]);
 		const imported = (await Resource.all()).find(r => r.id !== resource.id);
 		expect(imported.is_locked).toBe(1);
-		expect(await NoteLockResource.fileKeyId(imported)).toBe(NoteLockKey.instance().load().id);
+		expect((await NoteLockResource.fileHeader(imported)).masterKeyId).toBe(NoteLockKey.instance().load().id);
 		const plainPath = `${exportDir()}/check.jpg`;
 		await NoteLockResource.decryptFile(imported, plainPath, NoteLockSession.instance().decryptedKey());
 		expect(fileContentEqual(plainPath, `${supportDir}/photo.jpg`)).toBe(true);
