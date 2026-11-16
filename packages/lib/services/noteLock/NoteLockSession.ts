@@ -32,7 +32,7 @@ export default class NoteLockSession {
 	// check covers it.
 	public async unlock(password: string) {
 		if (this.rotating_) throw new Error('Cannot unlock: a note lock key reset is in progress');
-		if (this.migrating_) throw new Error(_('This note cannot be read while a note lock key migration is in progress.'));
+		if (this.migrating_) throw new Error(_('This note cannot be read while a migration is in progress.'));
 		const generation = this.lockGeneration_;
 		const decrypted = await this.noteLockKey_.decrypt(password);
 		if (this.lockGeneration_ !== generation) throw new Error('Cannot unlock: the session was locked while unlocking');
@@ -52,7 +52,7 @@ export default class NoteLockSession {
 	public async reset(password: string) {
 		if (this.rotating_) throw new Error('A note lock key reset is already in progress');
 		// The migration would adopt the target key over the new one when it ends.
-		if (this.migrating_) throw new Error(_('The note lock password cannot be reset while a note lock key migration is in progress.'));
+		if (this.migrating_) throw new Error(_('The note lock password cannot be reset while a migration is in progress.'));
 		this.rotating_ = true;
 		this.lock();
 		try {

@@ -445,6 +445,18 @@ describe('Synchronizer.noteLock', () => {
 		await expect(synchronizerStart(null, { throwOnError: true })).rejects.toThrow('on this device has no sync migration ID');
 	});
 
+	it('should not sync while a re-encryption of the locked notes is unfinished', async () => {
+		await NoteLockKey.instance().create('111111');
+		Setting.setValue('noteLock.reencryptPending', true);
+
+		await expect(synchronizerStart(null, { throwOnError: true })).rejects.toThrow('re-encryption of your locked notes');
+		expect(await remoteNoteLockKeyId()).toBeUndefined();
+
+		Setting.setValue('noteLock.reencryptPending', false);
+		await synchronizerStart(null, { throwOnError: true });
+		expect(await remoteNoteLockKeyId()).toBe(NoteLockKey.instance().load().id);
+	});
+
 	it('should let a profile without a note lock key sync from a target whose key has no sync migration id', async () => {
 		await NoteLockKey.instance().create('111111');
 		await Note.save({ title: 'synced note' });

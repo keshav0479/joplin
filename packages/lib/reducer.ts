@@ -97,6 +97,8 @@ export interface NoteLockMigrationStatus {
 	skipped: number;
 	awaitingDecryption: number;
 	failedRevisions: number;
+	// A re-encryption with the same key rather than a migration to the synced key.
+	reencrypt: boolean;
 }
 
 export type HighlightedWord = ComplexTerm|string;

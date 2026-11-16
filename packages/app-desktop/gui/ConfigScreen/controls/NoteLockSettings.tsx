@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useCallback, useState } from 'react';
 import { connect } from 'react-redux';
+import { Dispatch } from 'redux';
 import { _ } from '@joplin/lib/locale';
 import NoteLockKey from '@joplin/lib/services/noteLock/NoteLockKey';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
@@ -14,6 +15,7 @@ import useNoteLockMode, { ActionMode, noteLockPasswordErrorMessage } from '@jopl
 interface Props {
 	hasNoteLockKey: boolean;
 	needsNoteLockKeyUpgrade: boolean;
+	dispatch: Dispatch;
 }
 
 const NoteLockSettings: React.FC<Props> = props => {
@@ -219,6 +221,29 @@ const NoteLockSettings: React.FC<Props> = props => {
 		);
 	};
 
+	const onReencryptClick = useCallback(() => {
+		props.dispatch({ type: 'DIALOG_OPEN', name: 'noteLockReencrypt' });
+	}, [props.dispatch]);
+
+	// Shown whenever a key exists, since finding out whether any locked note still uses an older encryption method means reading them all.
+	const renderReencryptSection = () => {
+		if (!hasKey) return null;
+
+		return (
+			<div className='section'>
+				<h2>{_('Encryption upgrade')}</h2>
+				<p>{_('For better security, you can re-encrypt your locked notes using a newer encryption method when one is available. This is only necessary when a newer encryption method has been officially announced.')}</p>
+				<div className='buttons'>
+					<Button
+						title={_('Re-encrypt locked notes')}
+						level={ButtonLevel.Secondary}
+						onClick={onReencryptClick}
+					/>
+				</div>
+			</div>
+		);
+	};
+
 	return (
 		<div className='note-lock-settings'>
 			<div className='section'>
@@ -226,6 +251,7 @@ const NoteLockSettings: React.FC<Props> = props => {
 				{mode === ActionMode.Collapsed ? renderManageButtons() : renderPasswordForm()}
 			</div>
 			{renderUpgradeSection()}
+			{renderReencryptSection()}
 		</div>
 	);
 };
