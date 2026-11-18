@@ -366,6 +366,8 @@ const buildStartupTasks = (
 				type: 'SET_NOTE_LOCK_SESSION_UNLOCKED',
 				value: event.unlocked,
 			});
+			// A shared copy of a locked attachment is plain too, so it is removed with the decrypted copies.
+			if (!event.unlocked) void clearSharedFilesCache();
 		};
 		eventManager.on(EventName.NoteLockSessionChange, noteLockSessionChangeListener_);
 	});
