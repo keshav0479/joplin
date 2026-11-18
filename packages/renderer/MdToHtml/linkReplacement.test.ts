@@ -39,6 +39,33 @@ describe('linkReplacement', () => {
 		expect(r).toBe(`<a data-from-md data-resource-id='${resourceId}' href='#' onclick='postMessage(&quot;joplin://${resourceId}&quot;, { resourceId: &quot;${resourceId}&quot; }); return false;'><span class="resource-icon fa-joplin"></span>`);
 	});
 
+	test('should show a locked resource as decrypting, as locked with a tap to unlock, or from its decrypted copy', () => {
+		const resourceId = 'f6afba55bdf74568ac94f8d1e3578d2c';
+		const ResourceModel = {
+			...defaultResourceModel,
+			filename: (resource: { id?: string; file_extension?: string }) => `${resource.id}.${resource.file_extension}`,
+			fullPath: (resource: { id?: string; file_extension?: string }) => `/resources/${resource.id}.${resource.file_extension}`,
+		};
+		const render = (noteLock: { path?: string; sessionLocked?: boolean; mismatch?: boolean }) => linkReplacement(`:/${resourceId}`, {
+			ResourceModel,
+			resources: {
+				[resourceId]: {
+					item: { id: resourceId, is_locked: 1, file_extension: 'pdf', mime: 'application/pdf' },
+					localState: { fetch_status: 2 },
+					noteLock,
+				},
+			},
+		});
+
+		expect(render({}).html.indexOf(`<a class="not-loaded-resource resource-status-decrypting" data-resource-id="${resourceId}"><img`)).toBe(0);
+		expect(render({ sessionLocked: true }).html.indexOf(`<a class="not-loaded-resource resource-status-locked" data-resource-id="${resourceId}" onclick='postMessage(&quot;joplin://${resourceId}&quot;, { resourceId: &quot;${resourceId}&quot; }); return false;'><img`)).toBe(0);
+
+		const ready = render({ path: `locked-cache/${resourceId}.pdf`, mismatch: true });
+		expect(ready.resourceReady).toBe(true);
+		expect(ready.resourceFullPath).toBe(`/resources/locked-cache/${resourceId}.pdf`);
+		expect(ready.html).toContain('class=\'note-lock-mismatch\'');
+	});
+
 	test('should handle resource links - idle status', () => {
 		const resourceId = 'f6afba55bdf74568ac94f8d1e3578d2c';
 

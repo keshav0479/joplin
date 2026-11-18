@@ -39,6 +39,7 @@ import { ipcRenderer } from 'electron';
 import layoutKeyToLabel from '../utils/layout/layoutKeyToLabel';
 import MainLayoutPane from './MainLayoutPane';
 import WarningBanner from './WarningBanner';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 
 interface Props {
 	plugins: PluginStates;
@@ -259,6 +260,7 @@ class MainScreenComponent extends React.Component<Props, State> {
 			const sendCanClose = async (canClose: boolean) => {
 				logger.info('[appClose] Sending appCloseReply - canClose:', canClose);
 				if (canClose) {
+					await NoteLockResourceCache.clear();
 					Setting.setValue('wasClosedSuccessfully', true);
 					await Setting.saveAll();
 				}

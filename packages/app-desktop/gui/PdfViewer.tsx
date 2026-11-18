@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Dispatch } from 'redux';
 import { useCallback, useRef, useEffect } from 'react';
 import { ResourceEntity } from '@joplin/lib/services/database/types';
-import Resource from '@joplin/lib/models/Resource';
 import bridge from '../services/bridge';
 import contextMenu from './NoteEditor/utils/contextMenu';
 import { ContextMenuItemType, ContextMenuOptions } from './NoteEditor/utils/contextMenuUtils';
@@ -35,6 +34,7 @@ interface Props {
 	themeId: number;
 	dispatch: Dispatch;
 	resource: ResourceEntity;
+	filePath: string;
 	pageNo: number;
 }
 
@@ -104,7 +104,7 @@ export default function PdfViewer(props: Props) {
 
 	return (
 		<Window theme={theme}>
-			<IFrame src="./vendor/lib/@joplin/pdf-viewer/index.html" x-url={Resource.fullPath(props.resource)}
+			<IFrame src="./vendor/lib/@joplin/pdf-viewer/index.html" x-url={props.filePath}
 				x-appearance={theme.appearance} ref={iframeRef}
 				x-title={props.resource.title}
 				x-anchorpage={props.pageNo}

@@ -22,6 +22,10 @@ import { ContentScriptType } from '@joplin/lib/services/plugins/api/types';
 import { basename, dirname, join } from 'path';
 import PluginService from '@joplin/lib/services/plugins/PluginService';
 import mockPluginServiceSetup from '../../utils/testing/mockPluginServiceSetup';
+import CommandService from '@joplin/lib/services/CommandService';
+import NoteLockKey from '@joplin/lib/services/noteLock/NoteLockKey';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import * as noteLockPrompts from '@joplin/lib/services/noteLock/noteLockPrompts';
 
 interface WrapperProps {
 	noteBody: string;
@@ -207,5 +211,35 @@ describe('NoteBodyViewer', () => {
 		await waitFor(async () => {
 			expect(await Resource.localState(localResource.id)).toMatchObject({ fetch_status: Resource.FETCH_STATUS_DONE });
 		});
+	});
+
+	test.each([
+		['a file', 'sample.txt', true],
+		['an image', 'photo.jpg', false],
+	])('tapping %s locked while the session is locked should open it after the unlock only if it does not show in the note', async (_label, fileName, opens) => {
+		Setting.setValue('featureFlag.noteLock', true);
+		await NoteLockKey.instance().create('123456');
+		NoteLockSession.instance().lock();
+		const note = await shim.attachFileToNote(await Note.save({ title: 'Note' }), `${supportDir}/${fileName}`);
+		const resource = await Resource.save({ ...(await Resource.all())[0], is_locked: 1 });
+		const unlock = jest.spyOn(noteLockPrompts, 'unlockNoteLockSession').mockResolvedValue(true);
+		const execute = jest.spyOn(CommandService.instance(), 'execute').mockResolvedValue(undefined);
+
+		// As the note screen passes it for a locked attachment while the session is locked.
+		const resourceInfo = { localState: await Resource.localState(resource), item: resource, noteLock: { sessionLocked: true } };
+		render(<WrappedNoteViewer noteBody={note.body} noteResources={{ [resource.id]: resourceInfo }}/>);
+		const noteViewerDom = await getNoteViewerDom();
+		await waitFor(() => {
+			noteViewerDom.querySelector<HTMLElement>(`[data-resource-id=${JSON.stringify(resource.id)}]`).click();
+			expect(unlock).toHaveBeenCalled();
+		});
+		await waitFor(() => {
+			if (opens) expect(execute).toHaveBeenCalledWith('openItem', expect.stringContaining(resource.id));
+		});
+		if (!opens) expect(execute).not.toHaveBeenCalled();
+
+		unlock.mockRestore();
+		execute.mockRestore();
+		Setting.setValue('featureFlag.noteLock', false);
 	});
 });

@@ -13,6 +13,11 @@ export function clearResourceCache() {
 interface AttachedResource {
 	item: ResourceEntity;
 	localState: ResourceLocalState;
+	noteLock?: {
+		path?: string;
+		sessionLocked?: boolean;
+		mismatch?: boolean;
+	};
 }
 export interface AttachedResources {
 	[id: string]: AttachedResource;

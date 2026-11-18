@@ -180,7 +180,7 @@ const WarningBanner: React.FC<Props> = props => {
 		msg = renderNotificationMessage(_('Applying note lock changes. Please wait…'));
 	} else if (props.noteLockMigrationStatus?.running) {
 		msg = renderNotificationMessage(_('Re-encrypting your locked notes. Migration is in progress...'));
-	} else if (props.noteLockMigrationStatus?.failed || props.noteLockMigrationStatus?.awaitingDecryption || props.noteLockMigrationStatus?.failedRevisions) {
+	} else if (props.noteLockMigrationStatus?.failed || props.noteLockMigrationStatus?.failedResources || props.noteLockMigrationStatus?.awaitingDecryption || props.noteLockMigrationStatus?.failedRevisions) {
 		const reencrypt = props.noteLockMigrationStatus.reencrypt;
 		msg = renderNotificationMessage(
 			notMigratedMessage(props.noteLockMigrationStatus),
@@ -368,7 +368,7 @@ const mapStateToProps = (state: AppState) => {
 		shareInvitations: state.shareService.shareInvitations,
 		processingShareInvitationResponse: state.shareService.processingShareInvitationResponse,
 		isSafeMode: state.settings.isSafeMode,
-		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning,
+		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning || state.noteLockResourceChangeRunning,
 		mustUpgradeAppMessage: state.mustUpgradeAppMessage,
 		syncTargetAppMinVersion: state.mustUpgradeAppMinVersion,
 		showInvalidJoplinCloudCredential: state.settings['sync.target'] === 10 && state.mustAuthenticate,

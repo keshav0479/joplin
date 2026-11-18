@@ -8,13 +8,18 @@ import IconButton from '../IconButton';
 import { _ } from '@joplin/lib/locale';
 import { AppState } from '../../utils/types';
 import { themeStyle } from '../global-style';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import useAsyncEffect from '@joplin/lib/hooks/useAsyncEffect';
 import Resource, { NoteResourceSortDirection, NoteResourceSortField } from '@joplin/lib/models/Resource';
 import { ResourceEntity } from '@joplin/lib/services/database/types';
 import { substrWithEllipsis } from '@joplin/lib/string-utils';
 import shim from '@joplin/lib/shim';
 import showResource from '../../commands/util/showResource';
+import Icon from '../Icon';
+import NavService from '@joplin/lib/services/NavService';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
+import { unlockNoteLockSession } from '@joplin/lib/services/noteLock/noteLockPrompts';
+import { DialogContext } from '../DialogManager';
 import { bytesToHuman } from '@joplin/utils/bytes';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { buildResourceMarkdownLink, nextSortState } from './resourceScreenUtils';
@@ -61,6 +66,7 @@ const ResourceScreenComponent: React.FC<Props> = props => {
 	const [expandedResourceIds, setExpandedResourceIds] = useState<Record<string, boolean>>({});
 	const theme = themeStyle(props.themeId);
 	const isMountedRef = useRef(true);
+	const dialogs = useContext(DialogContext);
 	const activeLoadIdRef = useRef(0);
 	const getNextLoadId = useCallback(() => {
 		activeLoadIdRef.current++;
@@ -157,6 +163,16 @@ const ResourceScreenComponent: React.FC<Props> = props => {
 				color: theme.colorFaded,
 				fontSize: theme.fontSizeSmaller,
 				marginTop: 2,
+			},
+			rowMetaLine: {
+				flexDirection: 'row',
+				alignItems: 'center',
+			},
+			lockedIcon: {
+				color: theme.colorFaded,
+				fontSize: theme.fontSizeSmaller,
+				marginTop: 2,
+				marginLeft: 6,
 			},
 			copyButtonContainer: {
 				minWidth: 44,
@@ -282,6 +298,11 @@ const ResourceScreenComponent: React.FC<Props> = props => {
 
 	const onOpenResource = useCallback(async (resource: ResourceEntity) => {
 		try {
+			// A locked attachment opens as its decrypted copy, which needs the session unlocked.
+			if (isNoteLockEnabled() && resource.is_locked && !await unlockNoteLockSession({
+				promptPassword: label => dialogs.promptForText(label, '', true),
+				goToNoteLockSetup: () => void NavService.go('Config', { sectionName: 'noteLock' }),
+			})) return;
 			await showResource(resource);
 		} catch (error: unknown) {
 			if (!isMountedRef.current) return;
@@ -289,7 +310,7 @@ const ResourceScreenComponent: React.FC<Props> = props => {
 			const errorMessage = errorToMessage(error);
 			await shim.showErrorDialog(`${_('This file could not be opened: %s', fullPath)}\n\n${errorMessage}`);
 		}
-	}, []);
+	}, [dialogs]);
 
 	const onCopyMarkdownLink = useCallback((resource: ResourceEntity) => {
 		const markdownLink = buildResourceMarkdownLink(resource);
@@ -369,7 +390,10 @@ const ResourceScreenComponent: React.FC<Props> = props => {
 						accessibilityState={{ expanded: isExpanded }}
 					>
 						<Text accessible={false} style={styles.rowTitle} {...titleLineProps}>{title}</Text>
-						<Text accessible={false} style={styles.rowMeta}>{size}</Text>
+						<View style={styles.rowMetaLine}>
+							<Text accessible={false} style={styles.rowMeta}>{size}</Text>
+							{isNoteLockEnabled() && !!item.is_locked && <Icon name='fas fa-lock' style={styles.lockedIcon} accessibilityLabel={_('Locked attachment')} />}
+						</View>
 					</TouchableOpacity>
 					<View style={styles.actionIconsRow}>
 						<IconButton

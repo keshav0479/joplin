@@ -1,6 +1,7 @@
 import Resource from '@joplin/lib/models/Resource';
 import { ResourceEntity } from '@joplin/lib/services/database/types';
 import shim from '@joplin/lib/shim';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 
 // when refactoring this name, make sure to refactor the `SharePackage.java` (in android) as well
 const DIR_NAME = 'sharedFiles';
@@ -19,7 +20,7 @@ export async function copyToCache(resource: ResourceEntity): Promise<string> {
 	const targetDir = await makeShareCacheDirectory();
 	const targetFile = `${targetDir}/${filename}`;
 
-	await shim.fsDriver().copy(Resource.fullPath(resource), targetFile);
+	await shim.fsDriver().copy(await NoteLockResourceCache.plainPath(resource), targetFile);
 
 	return targetFile;
 }

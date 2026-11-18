@@ -11,7 +11,9 @@ import NoteLockSession from './NoteLockSession';
 import { noteLockKeyConflict } from '../synchronizer/syncInfoUtils';
 import JoplinError from '../../JoplinError';
 import { ErrorCode } from '../../errors';
-import { _ } from '../../locale';
+import { _, _n } from '../../locale';
+import shim, { MessageBoxType } from '../../shim';
+import NoteLockResource from './NoteLockResource';
 
 // Shared with the bulk change, which skips these notes instead of failing. Only needs the validationFields.
 export const noteLockChangeBlockedReason = (note: NoteEntity) => {
@@ -33,6 +35,8 @@ const checkCanChangeLockState = (note: NoteEntity, noteId: string) => {
 	if (noteLockKeyConflict()) throw new JoplinError(_('Notes cannot be locked or unlocked while a note lock key migration is required.'), ErrorCode.NoteLockKeyConflict);
 };
 
+const confirm = async (message: string) => await shim.showMessageBox(message, { buttons: [_('Yes'), _('No')], type: MessageBoxType.Confirm, cancelId: 1 }) === 0;
+
 export const validationFields = ['id', 'is_locked', 'deleted_time', 'is_conflict', 'share_id'];
 
 // These only validate and emit: the note screen listens for the event and persists the
@@ -41,6 +45,8 @@ export const enableNoteLock = async (noteId: string) => {
 	const note = await Note.load(noteId, { fields: validationFields });
 	checkCanChangeLockState(note, noteId);
 	if (note.is_locked) throw new Error(`Note is already locked: ${noteId}`);
+	const sharedCount = await NoteLockResource.sharedResourceCount(noteId, true);
+	if (sharedCount && !await confirm(_n('%d attachment of this note is also used by notes that are not locked, so it will not be locked. Lock the note anyway?', '%d attachments of this note are also used by notes that are not locked, so they will not be locked. Lock the note anyway?', sharedCount, sharedCount))) return;
 	eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked: true });
 };
 
@@ -48,5 +54,7 @@ export const disableNoteLock = async (noteId: string) => {
 	const note = await Note.load(noteId, { fields: validationFields });
 	checkCanChangeLockState(note, noteId);
 	if (!note.is_locked) throw new Error(`Note is not locked: ${noteId}`);
+	const sharedCount = await NoteLockResource.sharedResourceCount(noteId, false);
+	if (sharedCount && !await confirm(_n('%d attachment of this note is also used by other locked notes, and removing the lock removes it from that attachment for those notes too. Continue?', '%d attachments of this note are also used by other locked notes, and removing the lock removes it from those attachments for those notes too. Continue?', sharedCount, sharedCount))) return;
 	eventManager.emit(EventName.NoteLockNoteStateChange, { noteId, isLocked: false });
 };

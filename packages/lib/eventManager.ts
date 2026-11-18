@@ -23,6 +23,7 @@ export enum EventName {
 	WindowClose = 'windowClose',
 	NoteLockSessionChange = 'noteLockSessionChange',
 	NoteLockNoteStateChange = 'noteLockNoteStateChange',
+	NoteLockResourceDecrypted = 'noteLockResourceDecrypted',
 }
 
 export interface ItemChangeEvent {
@@ -96,6 +97,7 @@ type EventArgs = {
 	[EventName.WindowClose]: [WindowCloseEvent];
 	[EventName.NoteLockSessionChange]: [NoteLockSessionChangeEvent];
 	[EventName.NoteLockNoteStateChange]: [NoteLockNoteStateChangeEvent];
+	[EventName.NoteLockResourceDecrypted]: [ResourceChangeEvent];
 };
 
 type EventListenerCallbacks = {

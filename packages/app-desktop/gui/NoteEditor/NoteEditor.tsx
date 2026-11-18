@@ -29,6 +29,7 @@ import stateToWhenClauseContext from '../../services/commands/stateToWhenClauseC
 import ExternalEditWatcher from '@joplin/lib/services/ExternalEditWatcher';
 import { itemIsReadOnly, noteIsLockedInShare } from '@joplin/lib/models/utils/readOnly';
 import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import hasNoteLockKey from '../utils/hasNoteLockKey';
 import NoteLockPanel from './NoteLockPanel/NoteLockPanel';
@@ -105,12 +106,16 @@ function NoteEditorContent(props: NoteEditorProps) {
 	});
 	const formNote_beforeLoad = useCallback(async (event: OnLoadEvent) => {
 		await saveNoteIfWillChange(event.formNote);
+		// The attachments of the note being left stop decrypting. The finished copies stay for when it is opened again.
+		if (isNoteLockEnabled()) NoteLockResourceCache.cancelLoading();
 		// The lock must wait for the pending saves of the note being left: a locked note's save
 		// needs the unlocked session to encrypt, so locking first would drop the last edits.
 		// The note being left may have no form note at all (unlock or cannot-decrypt overlay).
 		if (isNoteLockEnabled() && Setting.value('noteLock.lockOnNoteSwitch')) {
 			await event.formNote.saveActionQueue?.waitForAllDone();
 			NoteLockSession.instance().lock();
+			// The next note only loads once the decrypted copies are gone.
+			await NoteLockResourceCache.clear();
 		}
 		setShowRevisions(false);
 	}, [saveNoteIfWillChange]);

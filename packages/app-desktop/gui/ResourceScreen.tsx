@@ -10,6 +10,8 @@ import prettyBytes = require('pretty-bytes');
 import Resource from '@joplin/lib/models/Resource';
 import { LoadOptions } from '@joplin/lib/models/utils/types';
 import { AppState } from '../app.reducer';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
+import CommandService from '@joplin/lib/services/CommandService';
 
 interface Style {
 	width: number;
@@ -27,6 +29,7 @@ interface InnerResource {
 	id: string;
 	size: number;
 	file_extension: string;
+	is_locked: number;
 }
 
 interface State {
@@ -126,6 +129,7 @@ const ResourceTableComp = (props: ResourceTable) => {
 								href="#"
 								onClick={() => props.onResourceClick(resource)}>{resource.title || `(${_('Untitled')})`}
 							</a>
+							{isNoteLockEnabled() && !!resource.is_locked && <i className="fas fa-lock" role="img" aria-label={_('Locked attachment')} title={_('Locked attachment')} style={{ marginLeft: 6 }}></i>}
 						</td>
 						<td style={cellStyle} className="dataCell">{prettyBytes(resource.size)}</td>
 						<td style={cellStyle} className="dataCell">{resource.id}</td>
@@ -211,7 +215,7 @@ class ResourceScreenComponent extends React.Component<Props, State> {
 				caseInsensitive: true,
 			}],
 			limit: this.maxResources,
-			fields: ['title', 'id', 'size', 'file_extension'],
+			fields: ['title', 'id', 'size', 'file_extension', 'is_locked'],
 			...searchOptions,
 		});
 
@@ -252,6 +256,11 @@ class ResourceScreenComponent extends React.Component<Props, State> {
 	}
 
 	public openResource(resource: InnerResource) {
+		// Opens as a read-only decrypted copy, or asks for the note lock password first.
+		if (isNoteLockEnabled() && resource.is_locked) {
+			void CommandService.instance().execute('openItem', `joplin://${resource.id}`);
+			return;
+		}
 		const resourcePath = Resource.fullPath(resource);
 		const ok = bridge().openItem(resourcePath);
 		if (!ok) {

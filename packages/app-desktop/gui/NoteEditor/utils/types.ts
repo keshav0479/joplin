@@ -18,6 +18,7 @@ import { ResourceEntity, ResourceLocalStateEntity } from '@joplin/lib/services/d
 import { EditorCursorLocations } from '@joplin/lib/services/NotePositionService';
 import type { DecryptedNoteLockKey } from '@joplin/lib/services/noteLock/NoteLockKey';
 import { HighlightedWord, SearchEntry } from '@joplin/lib/reducer';
+import type { ResourceInfo as RendererResourceInfo } from '@joplin/renderer/types';
 
 export interface AllAssetsOptions {
 	contentMaxWidthTarget?: string;
@@ -245,6 +246,7 @@ export function defaultFormNote(): FormNote {
 export interface ResourceInfo {
 	localState: ResourceLocalStateEntity;
 	item: ResourceEntity;
+	noteLock?: RendererResourceInfo['noteLock'];
 }
 
 export interface ResourceInfos {

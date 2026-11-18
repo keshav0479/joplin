@@ -19,7 +19,7 @@ function plugin(markdownIt: MarkdownIt, ruleOptions: RuleOptions) {
 		if (!Resource.isResourceUrl(src) || ruleOptions.plainResourceRendering) return defaultRender(tokens, idx, options, env, self);
 
 		const alt = token.content;
-		const r = utils.imageReplacement(ruleOptions.ResourceModel, { src, alt, title }, ruleOptions.resources, ruleOptions.resourceBaseUrl, ruleOptions.itemIdToUrl);
+		const r = utils.imageReplacement(ruleOptions.ResourceModel, { src, alt, title }, ruleOptions.resources, ruleOptions.resourceBaseUrl, ruleOptions.itemIdToUrl, ruleOptions.postMessageSyntax);
 		if (typeof r === 'string') return r;
 		if (r) {
 			const id = r['data-resource-id'];

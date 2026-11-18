@@ -26,6 +26,7 @@ import { unique } from '../array';
 import ActionLogger from '../utils/ActionLogger';
 import isSqliteSyntaxError from '../services/database/isSqliteSyntaxError';
 import { internalUrl, isResourceUrl, isSupportedImageMimeType, resourceFilename, resourceFullPath, resourcePathToId, resourceRelativePath, resourceUrlToId } from './utils/resourceUtils';
+import isNoteLockEnabled from '../services/noteLock/isNoteLockEnabled';
 
 export const resourceOcrStatusToString = (status: ResourceOcrStatus) => {
 	const s: Record<ResourceOcrStatus, string> = {
@@ -425,6 +426,8 @@ export default class Resource extends BaseItem {
 	public static async updateResourceBlobContent(resourceId: string, newBlobFilePath: string) {
 		const resource = await Resource.load(resourceId);
 		await this.requireIsReady(resource);
+		// A plain file written under is_locked = 1 would leave the row and the file out of sync.
+		if (isNoteLockEnabled() && resource.is_locked) throw new Error('Cannot update the file of a locked attachment');
 
 		const fileStat = await this.fsDriver().stat(newBlobFilePath);
 
@@ -537,6 +540,7 @@ export default class Resource extends BaseItem {
 				WHERE
 					(ocr_status = ? OR ocr_status = ? OR ocr_status = ?) AND
 					encryption_applied = 0 AND
+					is_locked = 0 AND
 					mime IN ('${supportedMimeTypes.join('\',\'')}')
 			`,
 			params: [
@@ -659,7 +663,7 @@ export default class Resource extends BaseItem {
 		const orderDirection = sortDirection.toUpperCase();
 		const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
 		const sql = `
-			SELECT id, title, size, file_extension, mime
+			SELECT id, title, size, file_extension, mime, is_locked
 			FROM resources
 			${whereSql}
 			ORDER BY ${orderBy} ${orderDirection}, id ASC

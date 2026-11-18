@@ -29,6 +29,9 @@ import { getGlobalSettings } from '@joplin/renderer/types';
 import Setting from '@joplin/lib/models/Setting';
 import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
 import NoteLockService from '@joplin/lib/services/noteLock/NoteLockService';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
+import noteLockResourceInfos from '@joplin/lib/services/noteLock/noteLockResourceInfos';
 import NoteLockPanel from './NoteEditor/NoteLockPanel/NoteLockPanel';
 import hasNoteLockKey from './utils/hasNoteLockKey';
 import { Dispatch } from 'redux';
@@ -108,8 +111,19 @@ const useNoteContent = (
 	useQueuedAsyncEffect(async () => {
 		const noteBody = note?.body ?? _('This note has no history');
 		const markupLanguage = note?.markup_language ?? MarkupLanguage.Markdown;
+		const resources = await shared.attachedResources(noteBody);
+		// A revision is not rendered again when a decrypted copy is ready, so it waits for them.
+		if (isNoteLockEnabled() && NoteLockSession.instance().isUnlocked()) {
+			for (const resource of Object.values(resources)) {
+				try {
+					if (resource.item?.is_locked) await NoteLockResourceCache.load(resource.item);
+				} catch {
+					// Shown with the locked placeholder instead.
+				}
+			}
+		}
 		const result = await markupToHtml(markupLanguage, noteBody, {
-			resources: await shared.attachedResources(noteBody),
+			resourceInfos: noteLockResourceInfos(resources, !!note?.is_locked),
 			whiteBackgroundNoteRendering: markupLanguage === MarkupLanguage.Html,
 			globalSettings: getGlobalSettings(Setting),
 			showNoteLinkIcon,

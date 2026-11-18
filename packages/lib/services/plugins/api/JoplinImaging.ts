@@ -5,6 +5,7 @@ import Setting from '../../../models/Setting';
 import shim from '../../../shim';
 import { ResourceEntity } from '../../database/types';
 import { Rectangle } from './types';
+import isNoteLockEnabled from '../../noteLock/isNoteLockEnabled';
 
 export interface CreateFromBufferOptions {
 	width?: number;
@@ -65,6 +66,7 @@ interface Image {
 const getResourcePath = async (resourceId: string): Promise<string> => {
 	const resource = await Resource.load(resourceId);
 	if (!resource) throw new Error(`No such resource: ${resourceId}`);
+	if (isNoteLockEnabled() && resource.is_locked) throw new Error(`The file of a locked attachment cannot be read by plugins: ${resourceId}`);
 	const resourcePath = await Resource.fullPath(resource);
 	if (!(await shim.fsDriver().exists(resourcePath))) throw new Error(`Could not load resource path: ${resourcePath}`);
 	return resourcePath;

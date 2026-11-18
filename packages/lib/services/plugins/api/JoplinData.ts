@@ -7,6 +7,7 @@ import { getItemUserData, setItemUserData, deleteItemUserData } from '../../../m
 import Api, { RequestFile, RequestMethod } from '../../rest/Api';
 import Plugin from '../Plugin';
 import { Path } from './types';
+import isNoteLockEnabled from '../../noteLock/isNoteLockEnabled';
 
 /**
  * This module provides access to the Joplin data API: https://joplinapp.org/help/api/references/rest_api
@@ -105,6 +106,7 @@ export default class JoplinData {
 	public async resourcePath(resourceId: string): Promise<string> {
 		const item = await Resource.load(resourceId);
 		if (!item) throw new Error(`No such resource: ${resourceId}`);
+		if (isNoteLockEnabled() && item.is_locked) throw new Error(`The file of a locked attachment cannot be read by plugins: ${resourceId}`);
 		return Resource.fullPath(item);
 	}
 

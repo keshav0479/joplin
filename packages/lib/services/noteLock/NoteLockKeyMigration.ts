@@ -4,6 +4,9 @@ import { _, _n } from '../../locale';
 import type { NoteLockMigrationStatus } from '../../reducer';
 import Note from '../../models/Note';
 import Revision from '../../models/Revision';
+import Resource from '../../models/Resource';
+import { ResourceEntity } from '../database/types';
+import NoteLockResource from './NoteLockResource';
 import time from '../../time';
 import shim, { MessageBoxType } from '../../shim';
 import Setting from '../../models/Setting';
@@ -16,11 +19,40 @@ import NoteLockService from './NoteLockService';
 
 const logger = Logger.create('NoteLockKeyMigration');
 
+// The files of locked attachments are encrypted with the local key too, so they move to the target key like the notes, and
+// a re-encryption moves the ones still on an older file encryption method. One under neither key was already unreadable here
+// and is left as it is.
+const migrateLockedResources = async (localKey: DecryptedNoteLockKey, targetKey: DecryptedNoteLockKey, reencrypt: boolean, result: NoteLockKeyMigrationResult) => {
+	const resources: ResourceEntity[] = await Resource.modelSelectAll('SELECT id, mime, file_extension, encryption_blob_encrypted FROM resources WHERE is_locked = 1');
+	for (const resource of resources) {
+		try {
+			if (resource.encryption_blob_encrypted) {
+				result.awaitingDecryption++;
+				continue;
+			}
+			// One that is not downloaded comes from the sync target, so it is not under the local key.
+			if ((await Resource.localState(resource)).fetch_status !== Resource.FETCH_STATUS_DONE) continue;
+			const header = await NoteLockResource.fileHeader(resource);
+			if (header.masterKeyId !== localKey.id) continue;
+			if (reencrypt && header.encryptionMethod === EncryptionService.instance().defaultFileEncryptionMethod()) continue;
+			await NoteLockResource.changeFileKey(resource, localKey, targetKey);
+			// The new file has to sync, like the re-encrypted notes.
+			const now = Date.now();
+			await Resource.save({ id: resource.id, updated_time: now, blob_updated_time: now }, { autoTimestamp: false });
+		} catch (error) {
+			logger.warn(`Could not migrate attachment ${resource.id}:`, error);
+			result.failedResources++;
+		}
+		if (!isNoteLockEnabled()) throw new Error(_('The migration of your locked notes was cancelled because the note lock feature was turned off.'));
+	}
+};
+
 export interface NoteLockKeyMigrationResult {
 	migrated: number;
 	// Locked with a key that is neither the local nor the sync target one, so nothing here can read them.
 	skipped: number;
 	failed: number;
+	failedResources: number;
 	// Still encrypted by sync, so their note lock body cannot be read yet. A retry once they are decrypted picks them up.
 	awaitingDecryption: number;
 	// Note history of locked notes, counted apart from the notes so a failed history version is not mistaken for a failed note.
@@ -35,7 +67,7 @@ const runMigration = async (localKey: DecryptedNoteLockKey, targetKey: Decrypted
 	const isDone = (header: Record<string, string | number>) => {
 		return header.masterKeyId === targetKey.id && (!reencrypt || header.encryptionMethod === encryptionService.defaultEncryptionMethod());
 	};
-	const result: NoteLockKeyMigrationResult = { migrated: 0, skipped: 0, failed: 0, awaitingDecryption: 0, failedRevisions: 0 };
+	const result: NoteLockKeyMigrationResult = { migrated: 0, skipped: 0, failed: 0, failedResources: 0, awaitingDecryption: 0, failedRevisions: 0 };
 	NoteLockSession.instance().setMigrating(true);
 	try {
 		onStarted?.();
@@ -85,6 +117,7 @@ const runMigration = async (localKey: DecryptedNoteLockKey, targetKey: Decrypted
 			}
 			if (!isNoteLockEnabled()) throw new Error(_('The migration of your locked notes was cancelled because the note lock feature was turned off.'));
 		}
+		await migrateLockedResources(localKey, targetKey, reencrypt, result);
 	} finally {
 		NoteLockSession.instance().setMigrating(false);
 	}
@@ -168,14 +201,14 @@ const startInBackground = async (run: (onStarted: ()=> void)=> Promise<NoteLockK
 		await shim.showErrorDialog(error.message);
 		return;
 	}
-	if (!result.failed && !result.awaitingDecryption && !result.failedRevisions) {
+	if (!result.failed && !result.failedResources && !result.awaitingDecryption && !result.failedRevisions) {
 		if (reencrypt) {
 			Setting.setValue(reencryptPendingSettingKey, false);
 		} else {
 			finishNoteLockKeyMigration();
 		}
 	}
-	dispatch({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: result.failed, skipped: result.skipped, awaitingDecryption: result.awaitingDecryption, failedRevisions: result.failedRevisions, reencrypt } });
+	dispatch({ type: 'NOTE_LOCK_MIGRATION_STATUS_SET', value: { running: false, failed: result.failed, failedResources: result.failedResources, skipped: result.skipped, awaitingDecryption: result.awaitingDecryption, failedRevisions: result.failedRevisions, reencrypt } });
 };
 
 export const startNoteLockKeyMigration = (localPassword: string, targetPassword: string, dispatch: Dispatch, onStarted: ()=> void, bulkChangeRunning: boolean) => {
@@ -191,6 +224,7 @@ export const notMigratedMessage = (status: NoteLockMigrationStatus) => {
 	const parts = [];
 	if (status.failed) parts.push(_n('%d locked note could not be migrated.', '%d locked notes could not be migrated.', status.failed, status.failed));
 	if (status.failedRevisions) parts.push(_n('%d note history version of a locked note could not be migrated.', '%d note history versions of locked notes could not be migrated.', status.failedRevisions, status.failedRevisions));
+	if (status.failedResources) parts.push(_n('%d locked attachment could not be migrated.', '%d locked attachments could not be migrated.', status.failedResources, status.failedResources));
 	if (status.awaitingDecryption) parts.push(_n('%d locked note is still waiting to be decrypted and was not migrated yet.', '%d locked notes are still waiting to be decrypted and were not migrated yet.', status.awaitingDecryption, status.awaitingDecryption));
 	return withSkippedCount(parts.join(' '), status);
 };

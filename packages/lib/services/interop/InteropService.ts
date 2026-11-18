@@ -4,6 +4,7 @@ import { _, _n } from '../../locale';
 import BaseItem from '../../models/BaseItem';
 import BaseModel, { ModelType } from '../../BaseModel';
 import Resource from '../../models/Resource';
+import Setting from '../../models/Setting';
 import Folder from '../../models/Folder';
 import NoteTag from '../../models/NoteTag';
 import Note from '../../models/Note';
@@ -12,6 +13,7 @@ import isNoteLockEnabled from '../noteLock/isNoteLockEnabled';
 import NoteLockNote, { NoteLockNoteEntity } from '../noteLock/NoteLockNote';
 import { DecryptedNoteLockKey } from '../noteLock/NoteLockKey';
 import NoteLockSession from '../noteLock/NoteLockSession';
+import NoteLockResource from '../noteLock/NoteLockResource';
 import { NoteEntity } from '../database/types';
 import InteropService_Importer_Jex from './InteropService_Importer_Jex';
 import InteropService_Importer_Md from './InteropService_Importer_Md';
@@ -408,9 +410,13 @@ export default class InteropService {
 		// Backups keep locked notes encrypted; other formats export them decrypted only when decryptLockedNotes is set.
 		const keepsLockedNotes = options.format === ExportModuleOutputFormat.Raw || options.format === ExportModuleOutputFormat.Jex;
 		let lockedNotesSkipped = 0;
+		let lockedResourcesSkipped = 0;
+		const decryptedResourcePaths: string[] = [];
 		// Read once, so enabling the feature partway through cannot leave the locked notes queued before it as ciphertext.
 		// Turning it off partway is caught by the gated load in decryptedNoteForExport_.
 		const noteLockEnabled = isNoteLockEnabled();
+		// An attachment that is being locked or unlocked would be copied halfway through.
+		if (noteLockEnabled) await NoteLockResource.idle();
 		// Captured at the start, so locking the session partway through does not skip the remaining locked notes.
 		const noteLockKey = NoteLockSession.instance().isUnlocked() ? NoteLockSession.instance().decryptedKey() : null;
 
@@ -538,7 +544,17 @@ export default class InteropService {
 
 				try {
 					if (itemType === BaseModel.TYPE_RESOURCE) {
-						const resourcePath = Resource.fullPath(item);
+						let resourcePath = Resource.fullPath(item);
+						// Backups keep the encrypted file. Other formats need the plain one, which needs the key.
+						if (noteLockEnabled && item.is_locked && !keepsLockedNotes) {
+							if (!noteLockKey) {
+								lockedResourcesSkipped++;
+								continue;
+							}
+							resourcePath = `${Setting.value('tempDir')}/${Resource.filename(item)}`;
+							await NoteLockResource.decryptFile(item, resourcePath, noteLockKey);
+							decryptedResourcePaths.push(resourcePath);
+						}
 						context.resourcePaths[item.id] = resourcePath;
 						exporter.updateContext(context);
 						await exporter.processResource(item, resourcePath);
@@ -557,6 +573,8 @@ export default class InteropService {
 
 		options.onProgress?.(ExportProgressState.Closing, null);
 		await exporter.close();
+		for (const path of decryptedResourcePaths) await shim.fsDriver().remove(path);
+		if (lockedResourcesSkipped) result.warnings.push(`${lockedResourcesSkipped} locked attachment(s) could not be unlocked and were not exported`);
 
 		if (lockedNotesSkipped) result.warnings.push(`${lockedNotesSkipped} locked note(s) could not be unlocked and were not exported`);
 

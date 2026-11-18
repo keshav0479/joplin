@@ -28,6 +28,8 @@ const { isImageMimeType } = require('../resourceUtils');
 import { MarkupToHtml } from '@joplin/renderer';
 import { ALL_NOTES_FILTER_ID } from '../reserved-ids';
 import NoteLockNote, { NoteLockNoteEntity } from '../services/noteLock/NoteLockNote';
+import NoteLockResource from '../services/noteLock/NoteLockResource';
+import NoteLockResourceCache from '../services/noteLock/NoteLockResourceCache';
 import isNoteLockEnabled from '../services/noteLock/isNoteLockEnabled';
 import { isValidNoteLockHeader } from '../services/e2ee/EncryptionService';
 import { ShareType, StateShare } from '../services/share/reducer';
@@ -244,7 +246,9 @@ export default class Note extends BaseItem {
 			// change, the preview is updated inside the note. This is not
 			// needed for other resources since they are simple links.
 			const timestampParam = isImage ? `?t=${resource.updated_time}` : '';
-			const resourcePath = options.useAbsolutePaths ? toFileProtocolPath(Resource.fullPath(resource)) + timestampParam : Resource.relativePath(resource);
+			// A locked attachment is shown from its decrypted copy. The editor waits until it is ready.
+			const fullPath = isNoteLockEnabled() && resource.is_locked && NoteLockResourceCache.isReady(resource) ? NoteLockResourceCache.path(resource) : Resource.fullPath(resource);
+			const resourcePath = options.useAbsolutePaths ? toFileProtocolPath(fullPath) + timestampParam : Resource.relativePath(resource);
 			body = body.replace(new RegExp(`:/${id}`, 'gi'), markdownUtils.escapeLinkUrl(resourcePath));
 		}
 
@@ -260,10 +264,13 @@ export default class Note extends BaseItem {
 
 		const pathsToTry = [];
 		if (options.useAbsolutePaths) {
-			pathsToTry.push(`file://${resourceDir}`);
-			pathsToTry.push(`file:///${resourceDir}`);
-			pathsToTry.push(`file://${shim.pathRelativeToCwd(resourceDir)}`);
-			pathsToTry.push(`file:///${shim.pathRelativeToCwd(resourceDir)}`);
+			// The decrypted copies of locked attachments are mapped back too.
+			for (const dir of [resourceDir, toForwardSlashes(NoteLockResourceCache.dir())]) {
+				pathsToTry.push(`file://${dir}`);
+				pathsToTry.push(`file:///${dir}`);
+				pathsToTry.push(`file://${shim.pathRelativeToCwd(dir)}`);
+				pathsToTry.push(`file:///${shim.pathRelativeToCwd(dir)}`);
+			}
 		} else {
 			const Resource = this.getClass<typeof ResourceClass>('Resource');
 			pathsToTry.push(Resource.baseRelativeDirectoryPath());
@@ -1073,6 +1080,14 @@ export default class Note extends BaseItem {
 		if (isNoteLockEnabled() && !!options?.useNoteLock && NoteLockNote.isLocking(o, oldNote)) {
 			await ItemChange.waitForAllSaved();
 			await this.revisionService().deleteUnencryptedHistoryForNote(savedNote.id, { sourceDescription: 'Note.save: note lock' });
+		}
+
+		// The attachments follow the note's lock state, including ones added to a note that is already locked.
+		if (isNoteLockEnabled() && !!options?.useNoteLock && !options.skipNoteLockResources) {
+			const lockChanged = NoteLockNote.isLocked(o) !== NoteLockNote.isLocked(oldNote);
+			if (lockChanged || (NoteLockNote.isLocked(o) && o.extracted_resource_ids !== oldNote?.extracted_resource_ids)) {
+				NoteLockResource.updateInBackground(savedNote.id, options.noteLockKey);
+			}
 		}
 
 		void ItemChange.add(BaseModel.TYPE_NOTE, savedNote.id, isNew ? ItemChange.TYPE_CREATE : ItemChange.TYPE_UPDATE, {

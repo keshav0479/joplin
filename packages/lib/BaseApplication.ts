@@ -69,6 +69,8 @@ import processStartFlags from './utils/processStartFlags';
 import { setupAutoDeletion } from './services/trash/permanentlyDeleteOldItems';
 import determineProfileAndBaseDir from './determineBaseAppDirs';
 import NavService from './services/NavService';
+import NoteLockResource from './services/noteLock/NoteLockResource';
+import NoteLockResourceCache from './services/noteLock/NoteLockResourceCache';
 import getAppName from './getAppName';
 import PerformanceLogger from './PerformanceLogger';
 import Synchronizer from './Synchronizer';
@@ -708,6 +710,8 @@ export default class BaseApplication {
 		BaseModel.dispatch = this.store().dispatch;
 		BaseSyncTarget.dispatch = this.store().dispatch;
 		NavService.dispatch = this.store().dispatch;
+		NoteLockResource.dispatch = this.store().dispatch;
+		void NoteLockResourceCache.initialize();
 		DecryptionWorker.instance().dispatch = this.store().dispatch;
 		ResourceFetcher.instance().dispatch = this.store().dispatch;
 		ShareService.instance().initialize(this.store(), EncryptionService.instance());

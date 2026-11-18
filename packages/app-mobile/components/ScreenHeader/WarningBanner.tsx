@@ -142,7 +142,7 @@ const WarningBannerComponent: React.FC<Props> = props => {
 	if (props.showNoteLockKeyConflictMessage !== false) {
 		if (migration?.running) {
 			warningComps.push(renderWarningBox('noteLockMigration', _('Re-encrypting your locked notes. Migration is in progress...'), null));
-		} else if (migration?.failed || migration?.awaitingDecryption || migration?.failedRevisions) {
+		} else if (migration?.failed || migration?.failedResources || migration?.awaitingDecryption || migration?.failedRevisions) {
 			warningComps.push(renderWarningBox('noteLockMigration', notMigratedMessage(migration), null, [
 				{ title: _('Retry'), onPress: () => void NavService.go('NoteLockMigration') },
 				{ title: _('Skip'), onPress: () => void confirmAndSkipNoteLockKeyMigration(props.dispatch) },
@@ -214,7 +214,7 @@ export default connect((state: AppState) => {
 		shareInvitations: state.shareService.shareInvitations,
 		processingShareInvitationResponse: state.shareService.processingShareInvitationResponse,
 		showInvalidJoplinCloudCredential: state.settings['sync.target'] === 10 && !isSyncLoginRoute(state) && state.mustAuthenticate,
-		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning,
+		noteLockBulkChangeRunning: state.noteLockBulkChangeRunning || state.noteLockResourceChangeRunning,
 		noteLockKeyConflict: noteLockKeyConflictFromState(state),
 		noteLockMigrationStatus: state.noteLockMigrationStatus,
 	};

@@ -12,6 +12,9 @@ import { NoteEntity, ResourceEntity, ResourceOcrDriverId, ResourceOcrStatus } fr
 import { TinyMceEditorEvents } from '../NoteBody/TinyMCE/utils/types';
 import { itemIsReadOnlySync, ItemSlice } from '@joplin/lib/models/utils/readOnly';
 import Setting from '@joplin/lib/models/Setting';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 import ItemChange from '@joplin/lib/models/ItemChange';
 import shim, { MessageBoxType } from '@joplin/lib/shim';
 import { openFileWithExternalEditor } from '@joplin/lib/services/ExternalEditWatcher/utils';
@@ -53,8 +56,16 @@ export async function openItemById(itemId: string, dispatch: Dispatch, hash = ''
 			return;
 		}
 
+		// A locked attachment opens as a read-only decrypted copy, once the session is unlocked. An image shows in the
+		// note after the unlock, so only other files are opened then.
+		if (isNoteLockEnabled() && resource.is_locked && !NoteLockSession.instance().isUnlocked()) {
+			const successCommand = Resource.isSupportedImageMimeType(resource.mime) ? undefined : { name: 'openItem', args: [`:/${itemId}${hash ? `#${hash}` : ''}`] };
+			dispatch({ type: 'DIALOG_OPEN', name: 'noteLockUnlock', props: { successCommand } });
+			return;
+		}
+
 		try {
-			if (itemIsReadOnlySync(ModelType.Resource, ItemChange.SOURCE_UNSPECIFIED, resource as ItemSlice, Setting.value('sync.userId'), BaseItem.syncShareCache)) {
+			if ((isNoteLockEnabled() && resource.is_locked) || itemIsReadOnlySync(ModelType.Resource, ItemChange.SOURCE_UNSPECIFIED, resource as ItemSlice, Setting.value('sync.userId'), BaseItem.syncShareCache)) {
 				await ResourceEditWatcher.instance().openAsReadOnly(resource.id);
 			} else {
 				await ResourceEditWatcher.instance().openAndWatch(resource.id);
@@ -114,7 +125,8 @@ export function menuItems(dispatch: Dispatch): ContextMenuItems {
 		saveAs: {
 			label: _('Save as...'),
 			onAction: async (options: ContextMenuOptions) => {
-				const { resourcePath, resource } = await resourceInfo(options);
+				const { resource } = await resourceInfo(options);
+				const resourcePath = await NoteLockResourceCache.plainPath(resource);
 				const filePath = await bridge().showSaveDialog({
 					defaultPath: resource.filename ? resource.filename : resource.title,
 				});
@@ -240,8 +252,8 @@ export function menuItems(dispatch: Dispatch): ContextMenuItems {
 		copyImage: {
 			label: _('Copy image'),
 			onAction: async (options: ContextMenuOptions) => {
-				const { resourcePath } = await resourceInfo(options);
-				const image = bridge().createImageFromPath(resourcePath);
+				const { resource } = await resourceInfo(options);
+				const image = bridge().createImageFromPath(await NoteLockResourceCache.plainPath(resource));
 				clipboard.writeImage(image);
 			},
 			isActive: (itemType: ContextMenuItemType, options: ContextMenuOptions) => !options.textToCopy && itemType === ContextMenuItemType.Image,

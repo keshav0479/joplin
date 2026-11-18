@@ -25,12 +25,14 @@ import useCheckboxToggle from '../useCheckboxToggle';
 import handlePositions from './handlePositions';
 import useCardWheel from './useCardWheel';
 import stripUnsafeStyles from './stripUnsafeStyles';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
+import noteLockResourceInfos from '@joplin/lib/services/noteLock/noteLockResourceInfos';
 
 const logger = Logger.create('WhiteboardFileNode');
 
-const resourceUrlFor = (resource: ResourceEntity | null, resourceDirectory: string): string | null => {
+const resourceUrlFor = (resource: ResourceEntity | null, resourceDirectory: string, decryptedPath: string | null): string | null => {
 	if (!resource || !resourceDirectory) return null;
-	return pathToFileURL(resourceFullPath(resource, resourceDirectory)).href;
+	return pathToFileURL(decryptedPath ?? resourceFullPath(resource, resourceDirectory)).href;
 };
 
 type LockedState = 'sessionLocked' | 'undecryptable' | null;
@@ -44,6 +46,9 @@ interface ResolvedItem {
 	userUpdatedTime?: number;
 	deletedTime?: number;
 	resource?: ResourceEntity;
+	// The decrypted copy of a locked attachment.
+	decryptedPath?: string;
+	isLocked?: boolean;
 }
 
 const useResolvedRef = (file: string): { resolved: ResolvedItem | null; refetch: ()=> void } => {
@@ -109,15 +114,34 @@ const useResolvedRef = (file: string): { resolved: ResolvedItem | null; refetch:
 						title: item.title || 'Untitled',
 						body,
 						isDecrypted,
+						isLocked: !!(item as NoteEntity).is_locked,
 						lockedState,
 						userUpdatedTime: item.user_updated_time,
 						deletedTime: item.deleted_time,
 					});
 				} else if (item.type_ === ModelType.Resource) {
+					// A locked attachment is shown from its decrypted copy, which needs the session unlocked.
+					let decryptedPath: string = undefined;
+					let lockedState: LockedState = null;
+					if (isNoteLockEnabled() && (item as ResourceEntity).is_locked) {
+						if (!NoteLockSession.instance().isUnlocked()) {
+							lockedState = 'sessionLocked';
+						} else {
+							try {
+								decryptedPath = await NoteLockResourceCache.load(item as ResourceEntity);
+							} catch (error) {
+								logger.warn(`Could not decrypt linked attachment ${ref.id}:`, error);
+								lockedState = 'undecryptable';
+							}
+						}
+					}
+					if (cancelled) return;
 					setResolved({
 						kind: 'resource',
 						title: item.title || file,
 						resource: item as ResourceEntity,
+						decryptedPath,
+						lockedState,
 						deletedTime: item.deleted_time,
 					});
 				} else {
@@ -146,7 +170,7 @@ const FileNode = ({ data, selected }: NodeProps<{ id: string; type: 'wbFile'; da
 	const { resolved, refetch } = useResolvedRef(node.file);
 	const isInternal = isInternalRef(node.file);
 	const url = isInternal
-		? resourceUrlFor(resolved?.resource ?? null, ctx.resourceDirectory)
+		? (resolved?.lockedState ? null : resourceUrlFor(resolved?.resource ?? null, ctx.resourceDirectory, resolved?.decryptedPath ?? null))
 		: (/^(https?:|file:)\/\//i.test(node.file) ? node.file : null);
 	const mime = resolved?.resource?.mime;
 	const isImage = isInternal
@@ -162,7 +186,7 @@ const FileNode = ({ data, selected }: NodeProps<{ id: string; type: 'wbFile'; da
 		}
 		void (async () => {
 			try {
-				const linkedResources = await attachedResources(resolved.body);
+				const linkedResources = noteLockResourceInfos(await attachedResources(resolved.body), !!resolved.isLocked);
 				if (cancelled) return;
 				const result = await ctx.markupToHtml(MarkupLanguage.Markdown, resolved.body, {
 					resourceInfos: linkedResources,

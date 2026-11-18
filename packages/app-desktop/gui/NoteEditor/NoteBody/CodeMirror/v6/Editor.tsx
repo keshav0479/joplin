@@ -15,6 +15,9 @@ import { parseResourceUrl } from '@joplin/lib/urlUtils';
 import { resourceFilename } from '@joplin/lib/models/utils/resourceUtils';
 import getResourceBaseUrl from '../../../utils/getResourceBaseUrl';
 import useContentScriptRegistration from './utils/useContentScriptRegistration';
+import isNoteLockEnabled from '@joplin/lib/services/noteLock/isNoteLockEnabled';
+import NoteLockSession from '@joplin/lib/services/noteLock/NoteLockSession';
+import NoteLockResourceCache from '@joplin/lib/services/noteLock/NoteLockResourceCache';
 
 interface Props extends EditorProps {
 	style: React.CSSProperties;
@@ -80,7 +83,18 @@ const Editor = (props: Props, ref: ForwardedRef<CodeMirrorControl>) => {
 				if (!url.itemId) return null;
 				const item = await Resource.load(url.itemId);
 				if (!item) return null;
-				return `${getResourceBaseUrl()}/${resourceFilename(item)}${reloadCounter ? `?r=${reloadCounter}` : ''}`;
+				let filename = resourceFilename(item);
+				// A locked attachment is shown from its decrypted copy, which needs the session unlocked.
+				if (isNoteLockEnabled() && item.is_locked) {
+					if (!NoteLockSession.instance().isUnlocked()) return null;
+					try {
+						await NoteLockResourceCache.load(item);
+					} catch {
+						return null;
+					}
+					filename = NoteLockResourceCache.relativePath(item);
+				}
+				return `${getResourceBaseUrl()}/${filename}${reloadCounter ? `?r=${reloadCounter}` : ''}`;
 			},
 		});
 		editor.addStyles({
