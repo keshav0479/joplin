@@ -102,7 +102,6 @@ describe('NoteLockResource', () => {
 	it('should not encrypt an attachment that an unlocked note also uses, and count it for the confirmation', async () => {
 		const { note, resource } = await noteWithAttachment();
 		await Note.save({ title: 'other', body: Resource.markdownTag(resource) });
-		await ResourceService.instance().indexNoteResources();
 		expect(await NoteLockResource.sharedResourceCount(note.id, true)).toBe(1);
 
 		await lockNote(note, true);
@@ -114,7 +113,6 @@ describe('NoteLockResource', () => {
 	it('should decrypt an attachment that another locked note uses when the lock is removed, and count it for the confirmation', async () => {
 		const { note, resource } = await noteWithAttachment();
 		const other = await Note.save({ title: 'other', body: Resource.markdownTag(resource) });
-		await ResourceService.instance().indexNoteResources();
 		await lockNote(note, true);
 		await lockNote(other, true);
 		expect((await Resource.load(resource.id)).is_locked).toBe(1);

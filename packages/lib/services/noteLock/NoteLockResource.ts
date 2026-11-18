@@ -11,6 +11,7 @@ import EncryptionService, { isValidHeaderIdentifier } from '../e2ee/EncryptionSe
 import NoteLockService from './NoteLockService';
 import NoteLockNote from './NoteLockNote';
 import NoteLockSession from './NoteLockSession';
+import ResourceService from '../ResourceService';
 import type { DecryptedNoteLockKey } from './NoteLockKey';
 
 const logger = Logger.create('NoteLockResource');
@@ -54,6 +55,8 @@ const downloadedResources = async (resourceIds: string[], isLocked: boolean) => 
 // Attachments that another note with the given lock state also uses.
 const usedByOtherNotes = async (resourceIds: string[], noteId: string, otherNoteIsLocked: boolean) => {
 	if (!resourceIds.length) return [];
+	// The associations are otherwise only indexed before a sync or by the maintenance run, so a recent edit would be missed.
+	await ResourceService.instance().indexNoteResources();
 	const rows = await Resource.db().selectAll(`
 		SELECT DISTINCT nr.resource_id FROM note_resources nr
 		INNER JOIN notes n ON n.id = nr.note_id
