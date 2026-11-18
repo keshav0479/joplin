@@ -56,9 +56,11 @@ export async function openItemById(itemId: string, dispatch: Dispatch, hash = ''
 			return;
 		}
 
-		// A locked attachment opens as a read-only decrypted copy, once the session is unlocked.
+		// A locked attachment opens as a read-only decrypted copy, once the session is unlocked. An image shows in the
+		// note after the unlock, so only other files are opened then.
 		if (isNoteLockEnabled() && resource.is_locked && !NoteLockSession.instance().isUnlocked()) {
-			dispatch({ type: 'DIALOG_OPEN', name: 'noteLockUnlock' });
+			const successCommand = Resource.isSupportedImageMimeType(resource.mime) ? undefined : { name: 'openItem', args: [`:/${itemId}${hash ? `#${hash}` : ''}`] };
+			dispatch({ type: 'DIALOG_OPEN', name: 'noteLockUnlock', props: { successCommand } });
 			return;
 		}
 

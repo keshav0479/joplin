@@ -53,14 +53,16 @@ function NoteBodyViewer(props: Props) {
 
 	const onJoplinLinkClick = useCallback(async (message: string) => {
 		try {
-			// Tapping a locked attachment while the session is locked asks for the password, after which it is shown.
+			// Tapping a locked attachment while the session is locked asks for the password first. An image then shows in
+			// the note, so only other files are opened.
 			const resourceId = parseResourceUrl(message)?.itemId;
-			if (isNoteLockEnabled() && resourceId && !NoteLockSession.instance().isUnlocked() && (await Resource.load(resourceId, { fields: ['is_locked'] }))?.is_locked) {
-				await unlockNoteLockSession({
+			const resource = isNoteLockEnabled() && resourceId && !NoteLockSession.instance().isUnlocked() ? await Resource.load(resourceId, { fields: ['is_locked', 'mime'] }) : null;
+			if (resource?.is_locked) {
+				const unlocked = await unlockNoteLockSession({
 					promptPassword: label => dialogs.promptForText(label, '', true),
 					goToNoteLockSetup: () => void NavService.go('Config', { sectionName: 'noteLock' }),
 				});
-				return;
+				if (!unlocked || Resource.isSupportedImageMimeType(resource.mime)) return;
 			}
 			await CommandService.instance().execute('openItem', message);
 		} catch (error) {

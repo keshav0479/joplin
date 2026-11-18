@@ -21,7 +21,7 @@ export const runtime = (): CommandRuntime => {
 			let filePath = Resource.fullPath(resource);
 			if (isNoteLockEnabled() && resource.is_locked) {
 				if (!NoteLockSession.instance().isUnlocked()) {
-					context.dispatch({ type: 'DIALOG_OPEN', name: 'noteLockUnlock' });
+					context.dispatch({ type: 'DIALOG_OPEN', name: 'noteLockUnlock', props: { successCommand: { name: 'openPdfViewer', args: [resourceId, pageNo] } } });
 					return;
 				}
 				filePath = await NoteLockResourceCache.load(resource);
